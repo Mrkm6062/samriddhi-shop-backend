@@ -1164,6 +1164,45 @@ app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, async 
   }
 });
 
+// Create admin account (bypasses rate limiting)
+app.post('/api/create-admin', async (req, res) => {
+  try {
+    const adminEmail = 'admin@samriddhishop.com';
+    const { password } = req.body;
+    
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
+    const existingUser = await User.findOne({ email: adminEmail });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Admin account already exists' });
+    }
+    
+    const adminUser = new User({
+      name: 'Admin',
+      email: adminEmail,
+      password: password
+    });
+    
+    await adminUser.save();
+    
+    const token = jwt.sign(
+      { userId: adminUser._id },
+      process.env.JWT_SECRET || 'fallback_secret_key',
+      { expiresIn: '7d' }
+    );
+    
+    res.json({
+      message: 'Admin account created successfully',
+      token,
+      user: { id: adminUser._id, name: adminUser.name, email: adminUser.email }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create admin account' });
+  }
+});
+
 // Seed sample products (for development)
 app.post('/api/seed', async (req, res) => {
   try {
