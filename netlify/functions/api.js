@@ -64,13 +64,13 @@ const Product = mongoose.model('Product', productSchema);
 const Contact = mongoose.model('Contact', contactSchema);
 
 // Routes
-app.get('/api/products', async (req, res) => {
+app.get('/products', async (req, res) => {
   await connectDB();
   const products = await Product.find();
   res.json(products);
 });
 
-app.post('/api/register', [
+app.post('/register', [
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 }),
   body('name').trim().isLength({ min: 1 })
@@ -93,7 +93,7 @@ app.post('/api/register', [
   }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/login', async (req, res) => {
   await connectDB();
   const { email, password } = req.body;
   
@@ -106,20 +106,20 @@ app.post('/api/login', async (req, res) => {
   res.json({ token, user: { id: user._id, name: user.name, email: user.email } });
 });
 
-app.post('/api/contact', async (req, res) => {
+app.post('/contact', async (req, res) => {
   await connectDB();
   const contact = new Contact(req.body);
   await contact.save();
   res.status(201).json({ message: 'Message sent successfully' });
 });
 
-app.get('/api/contacts', async (req, res) => {
+app.get('/contacts', async (req, res) => {
   await connectDB();
   const contacts = await Contact.find().sort({ createdAt: -1 });
   res.json(contacts);
 });
 
-app.post('/api/seed', async (req, res) => {
+app.post('/seed', async (req, res) => {
   await connectDB();
   const sampleProducts = [
     {
