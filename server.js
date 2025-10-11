@@ -401,14 +401,18 @@ app.post('/api/checkout',
   validateInput,
   async (req, res) => {
     try {
-      const { items, total } = req.body;
+      const { items, total, shippingCost = 0, tax = 0, discount = 0 } = req.body;
 
       // Validate all products exist and calculate total
       let calculatedTotal = 0;
       const orderItems = [];
 
       for (const item of items) {
-        const product = await Product.findById(item._id);
+        // The items from the cart/buy-now state might have different structures
+        const productId = item.productId || item._id;
+        if (!productId) continue;
+
+        const product = await Product.findById(productId);
         if (!product) {
           return res.status(404).json({ error: `Product ${item.name} not found` });
         }
@@ -424,9 +428,12 @@ app.post('/api/checkout',
       }
 
       // Verify total matches
-      if (Math.abs(calculatedTotal - total) > 0.01) {
+      if (Math.abs(calculatedTotal - total) > 0.01) { // 'total' from frontend is subtotal
         return res.status(400).json({ error: 'Total amount mismatch' });
       }
+
+      // Calculate the final grand total for the order
+      const grandTotal = calculatedTotal + shippingCost + tax - discount;
 
       // Generate order number
       const now = new Date();
@@ -444,12 +451,12 @@ app.post('/api/checkout',
         orderNumber,
         userId: req.user._id,
         items: orderItems,
-        total: calculatedTotal,
+        total: grandTotal, // Save the final grand total
         status: 'pending',
         shippingAddress: req.body.shippingAddress,
         couponCode: req.body.couponCode,
-        discount: req.body.discount || 0,
-        shippingCost: req.body.shippingCost || 0,
+        discount: discount,
+        shippingCost: shippingCost,
         tax: req.body.tax || 0
       });
 
@@ -472,7 +479,7 @@ app.post('/api/checkout',
       res.json({ 
         message: 'Order placed successfully', 
         orderId: order._id,
-        total: calculatedTotal
+        total: grandTotal
       });
     } catch (error) {
       res.status(500).json({ error: 'Checkout failed' });
