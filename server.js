@@ -519,18 +519,11 @@ app.patch('/api/orders/:id/status',
 
       order.status = status;
 
-      // If status is shipped, update courier details and reduce stock
-      if (status === 'shipped' && (courierName || trackingNumber)) {
-        order.courierDetails = {
-          courierName: courierName || order.courierDetails?.courierName,
-          trackingNumber: trackingNumber || order.courierDetails?.trackingNumber,
-          estimatedDelivery: estimatedDelivery ? new Date(estimatedDelivery) : order.courierDetails?.estimatedDelivery,
-          shippedAt: new Date()
-        };
-        
-        // Reduce stock when shipped
+      // If status is processing, reduce stock
+      if (status === 'processing') {
+        // Reduce stock
         for (const item of order.items) {
-          if (item.selectedVariant) {
+          if (item.selectedVariant && item.selectedVariant.size && item.selectedVariant.color) {
             // Reduce variant stock
             await Product.findOneAndUpdate(
               { 
@@ -546,6 +539,13 @@ app.patch('/api/orders/:id/status',
               $inc: { stock: -item.quantity }
             });
           }
+        }
+      } else if (status === 'shipped' && (courierName || trackingNumber)) {
+        order.courierDetails = {
+          courierName: courierName || order.courierDetails?.courierName,
+          trackingNumber: trackingNumber || order.courierDetails?.trackingNumber,
+          estimatedDelivery: estimatedDelivery ? new Date(estimatedDelivery) : order.courierDetails?.estimatedDelivery,
+          shippedAt: new Date()
         }
       }
 
