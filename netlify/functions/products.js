@@ -30,7 +30,16 @@ exports.handler = async (event, context) => {
 
   try {
     await connectDB();
-    
+  } catch (dbError) {
+    console.error('Database connection failed:', dbError);
+    return {
+      statusCode: 503,
+      headers,
+      body: JSON.stringify({ error: 'Database unavailable' })
+    };
+  }
+
+  try {
     if (event.httpMethod === 'GET') {
       const products = await Product.find();
       return {
@@ -45,11 +54,12 @@ exports.handler = async (event, context) => {
       headers,
       body: JSON.stringify({ error: 'Method not allowed' })
     };
-  } catch (error) {
+  } catch (queryError) {
+    console.error('Database query failed:', queryError);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Server error' })
+      body: JSON.stringify({ error: 'Failed to fetch products' })
     };
   }
 };

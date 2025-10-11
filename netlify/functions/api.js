@@ -1,31 +1,42 @@
 const express = require('express');
 const serverless = require('serverless-http');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const { body, validationResult } = require('express-validator');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
+
+// Lazy load modules
+let mongoose, cors, helmet, rateLimit, expressValidator, bcrypt, jwt;
+
+const loadModules = async () => {
+  if (!mongoose) {
+    mongoose = require('mongoose');
+    cors = require('cors');
+    helmet = require('helmet');
+    rateLimit = require('express-rate-limit');
+    expressValidator = require('express-validator');
+    bcrypt = require('bcrypt');
+    jwt = require('jsonwebtoken');
+  }
+};
 
 const app = express();
 
-// Middleware
-app.use(helmet());
-app.use(cors({
-  origin: ['https://samriddhishop.netlify.app', 'http://localhost:3000'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-app.use(express.json());
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
-});
-app.use(limiter);
+// Initialize middleware after loading modules
+const initializeMiddleware = async () => {
+  await loadModules();
+  
+  app.use(helmet());
+  app.use(cors({
+    origin: ['https://samriddhishop.netlify.app', 'http://localhost:3000'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+  }));
+  app.use(express.json());
+  
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100
+  });
+  app.use(limiter);
+};
 
 // MongoDB connection
 const connectDB = async () => {
@@ -63,18 +74,43 @@ const User = mongoose.model('User', userSchema);
 const Product = mongoose.model('Product', productSchema);
 const Contact = mongoose.model('Contact', contactSchema);
 
+// Auth middleware
+const authenticateToken = async (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: 'Access token required' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (error) {
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+};
+
 // Routes
 app.get('/products', async (req, res) => {
+  await initializeMiddleware();
   await connectDB();
   const products = await Product.find();
   res.json(products);
 });
 
-app.post('/register', [
-  body('email').isEmail().normalizeEmail(),
-  body('password').isLength({ min: 6 }),
-  body('name').trim().isLength({ min: 1 })
-], async (req, res) => {
+app.post('/register', async (req, res) => {
+  await initializeMiddleware();
+  
+  const { body, validationResult } = expressValidator;
+  const validators = [
+    body('email').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 6 }),
+    body('name').trim().isLength({ min: 1 })
+  ];
+  
+  await Promise.all(validators.map(v => v.run(req)));
   await connectDB();
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -94,6 +130,7 @@ app.post('/register', [
 });
 
 app.post('/login', async (req, res) => {
+  await initializeMiddleware();
   await connectDB();
   const { email, password } = req.body;
   
@@ -107,19 +144,22 @@ app.post('/login', async (req, res) => {
 });
 
 app.post('/contact', async (req, res) => {
+  await initializeMiddleware();
   await connectDB();
   const contact = new Contact(req.body);
   await contact.save();
   res.status(201).json({ message: 'Message sent successfully' });
 });
 
-app.get('/contacts', async (req, res) => {
+app.get('/contacts', authenticateToken, async (req, res) => {
+  await initializeMiddleware();
   await connectDB();
   const contacts = await Contact.find().sort({ createdAt: -1 });
   res.json(contacts);
 });
 
 app.post('/seed', async (req, res) => {
+  await initializeMiddleware();
   await connectDB();
   const sampleProducts = [
     {

@@ -37,19 +37,38 @@ exports.handler = async (event, context) => {
 
   try {
     await connectDB();
-    
-    const { name, email, password } = JSON.parse(event.body);
-    
-    if (!name || !email || !password || password.length < 6) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({ error: 'Invalid input data' })
-      };
-    }
+  } catch (dbError) {
+    console.error('Database connection failed:', dbError);
+    return {
+      statusCode: 503,
+      headers,
+      body: JSON.stringify({ error: 'Database unavailable' })
+    };
+  }
 
+  let requestData;
+  try {
+    requestData = JSON.parse(event.body);
+  } catch (parseError) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ error: 'Invalid JSON format' })
+    };
+  }
+
+  const { name, email, password } = requestData;
+  
+  if (!name || !email || !password || password.length < 6) {
+    return {
+      statusCode: 400,
+      headers,
+      body: JSON.stringify({ error: 'Invalid input data' })
+    };
+  }
+
+  try {
     const hashedPassword = await bcrypt.hash(password, 12);
-    
     const user = new User({ name, email, password: hashedPassword });
     await user.save();
     
@@ -58,11 +77,19 @@ exports.handler = async (event, context) => {
       headers,
       body: JSON.stringify({ message: 'User created successfully' })
     };
-  } catch (error) {
+  } catch (userError) {
+    console.error('User creation failed:', userError);
+    if (userError.code === 11000) {
+      return {
+        statusCode: 409,
+        headers,
+        body: JSON.stringify({ error: 'Email already exists' })
+      };
+    }
     return {
-      statusCode: 400,
+      statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Email already exists' })
+      body: JSON.stringify({ error: 'Failed to create user' })
     };
   }
 };
