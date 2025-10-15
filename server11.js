@@ -822,7 +822,7 @@ app.patch('/api/admin/products/:id/toggle', authenticateToken, adminAuth, csrfPr
 // Admin - Get all orders
 app.get('/api/admin/orders', authenticateToken, adminAuth, async (req, res) => {
   try {
-    const orders = await Order.find().sort({ createdAt: -1 }).populate('userId', 'name email');
+    const orders = await Order.find().sort({ createdAt: -1 }).populate('userId', 'name email phone');
     res.json(orders);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch orders' });
