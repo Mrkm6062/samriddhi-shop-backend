@@ -1111,8 +1111,8 @@ app.get('/api/banner', async (req, res) => {
 app.put('/api/admin/banner', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const banner = await Banner.findOneAndUpdate(
-      { isActive: true },
-      { ...req.body, updatedAt: new Date() },
+      {}, // Find the first (and only) banner document
+      { ...req.body, updatedAt: new Date(), $setOnInsert: { isActive: true } },
       { upsert: true, new: true }
     );
     res.json({ message: 'Banner updated successfully', banner });
