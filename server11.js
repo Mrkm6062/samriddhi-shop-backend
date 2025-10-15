@@ -143,6 +143,7 @@ const orderSchema = new mongoose.Schema({
     country: String
   },
   paymentMethod: { type: String, default: 'cod' },
+  paymentStatus: { type: String, enum: ['pending', 'received'], default: 'pending' },
   courierDetails: {
     courierName: String,
     trackingNumber: String,
@@ -447,6 +448,7 @@ app.post('/api/checkout',
         status: 'pending',
         shippingAddress: req.body.shippingAddress,
         paymentMethod: req.body.paymentMethod || 'cod',
+        paymentStatus: req.body.paymentMethod === 'cod' ? 'pending' : 'received',
         couponCode: req.body.couponCode,
         discount: req.body.discount || 0,
         shippingCost: req.body.shippingCost || 0,
@@ -511,6 +513,11 @@ app.patch('/api/orders/:id/status',
       });
 
       order.status = status;
+
+      // If a COD order is marked as delivered, automatically mark payment as received
+      if (status === 'delivered' && order.paymentMethod === 'cod') {
+        order.paymentStatus = 'received';
+      }
 
       // If status is shipped, update courier details and reduce stock
       if (status === 'shipped' && (courierName || trackingNumber)) {
