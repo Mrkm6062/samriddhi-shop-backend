@@ -571,7 +571,7 @@ app.get('/api/admin/orders/date-range', authenticateToken, adminAuth, async (req
     
     const orders = await Order.find(query)
       .sort({ createdAt: -1 })
-      .populate('userId', 'name email phone');
+      .populate('userId', 'name email phone'); // This line is correct, no change needed here.
     
     res.json(orders);
   } catch (error) {
