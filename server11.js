@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import { body, validationResult } from 'express-validator';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
 
 dotenv.config();
 
@@ -46,6 +47,12 @@ app.use(express.json({ limit: '10mb' }));
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/samriddhishop', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+});
+
+// Razorpay instance
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // User Schema
@@ -142,7 +149,7 @@ const orderSchema = new mongoose.Schema({
     zipCode: String,
     country: String
   },
-  paymentMethod: { type: String, default: 'cod' },
+  paymentMethod: { type: String, default: 'cod', enum: ['cod', 'razorpay'] },
   paymentStatus: { type: String, enum: ['pending', 'received'], default: 'pending' },
   courierDetails: {
     courierName: String,
@@ -156,6 +163,11 @@ const orderSchema = new mongoose.Schema({
     updatedBy: String,
     notes: String
   }],
+  paymentDetails: {
+    razorpay_payment_id: String,
+    razorpay_order_id: String,
+    razorpay_signature: String,
+  },
   couponCode: String,
   discount: { type: Number, default: 0 },
   shippingCost: { type: Number, default: 0 },
@@ -448,11 +460,16 @@ app.post('/api/checkout',
         status: 'pending',
         shippingAddress: req.body.shippingAddress,
         paymentMethod: req.body.paymentMethod || 'cod',
-        paymentStatus: req.body.paymentMethod === 'cod' ? 'pending' : 'received',
+        paymentStatus: req.body.paymentMethod !== 'cod' ? 'received' : 'pending',
         couponCode: req.body.couponCode,
         discount: req.body.discount || 0,
         shippingCost: req.body.shippingCost || 0,
-        tax: req.body.tax || 0
+        tax: req.body.tax || 0,
+        paymentDetails: {
+          razorpay_payment_id: req.body.razorpay_payment_id,
+          razorpay_order_id: req.body.razorpay_order_id,
+          razorpay_signature: req.body.razorpay_signature,
+        }
       });
 
       await order.save();
@@ -481,6 +498,53 @@ app.post('/api/checkout',
     }
   }
 );
+
+// Create Razorpay Order
+app.post('/api/payment/create-order', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const options = {
+      amount: Math.round(amount * 100), // amount in the smallest currency unit
+      currency: "INR",
+      receipt: `receipt_order_${crypto.randomBytes(4).toString('hex')}`
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    if (!order) {
+      return res.status(500).send("Error creating Razorpay order");
+    }
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      keyId: process.env.RAZORPAY_KEY_ID
+    });
+  } catch (error) {
+    res.status(500).send("Error creating Razorpay order");
+  }
+});
+
+// Verify Razorpay Payment
+app.post('/api/payment/verify', async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest('hex');
+
+    if (expectedSignature === razorpay_signature) {
+      res.json({ success: true, message: "Payment verified successfully" });
+    } else {
+      res.status(400).json({ success: false, message: "Payment verification failed" });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Payment verification failed' });
+  }
+});
 
 // Update order status (for admin/testing)
 app.patch('/api/orders/:id/status', 
