@@ -354,7 +354,7 @@ app.post('/api/login',
 );
 
 // Add item to cart (for logged-in users)
-app.post('/api/cart/add', authenticateToken, async (req, res) => {
+app.post('/api/cart/add', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const { productId, quantity = 1 } = req.body;
     
