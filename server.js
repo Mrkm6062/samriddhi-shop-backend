@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import { body, validationResult } from 'express-validator';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import Razorpay from 'razorpay';
 
 dotenv.config();
 
@@ -25,55 +26,33 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiting
+// Rate limiting (relaxed for better user experience)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // increased limit
   message: 'Too many requests from this IP, please try again later.'
 });
 app.use('/api/', limiter);
 
-// Stricter rate limiting for auth endpoints
+// Relaxed rate limiting for auth endpoints
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Increase to 100 attempts per 15 minutes per IP
+  windowMs: 15 * 60 * 1000,
+  max: 50, // increased from 5 to 50
   message: 'Too many authentication attempts, please try again later.'
 });
 
 app.use(express.json({ limit: '10mb' }));
 
-// CSRF Protection
-const csrfTokens = new Map();
-
-const generateCSRFToken = () => {
-  return crypto.randomBytes(32).toString('hex');
-};
-
-const csrfProtection = (req, res, next) => {
-  if (req.method === 'GET') return next();
-  
-  const token = req.headers['x-csrf-token'];
-  const sessionId = req.headers['authorization'] || 'anonymous';
-  
-  if (!token || !csrfTokens.has(sessionId) || csrfTokens.get(sessionId) !== token) {
-    return res.status(403).json({ error: 'Invalid CSRF token' });
-  }
-  
-  next();
-};
-
-// CSRF token endpoint
-app.get('/api/csrf-token', (req, res) => {
-  const token = generateCSRFToken();
-  const sessionId = req.headers['authorization'] || 'anonymous';
-  csrfTokens.set(sessionId, token);
-  res.json({ csrfToken: token });
-});
-
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/samriddhishop', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+});
+
+// Razorpay instance
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // User Schema
@@ -170,6 +149,8 @@ const orderSchema = new mongoose.Schema({
     zipCode: String,
     country: String
   },
+  paymentMethod: { type: String, default: 'cod', enum: ['cod', 'razorpay'] },
+  paymentStatus: { type: String, enum: ['pending', 'received'], default: 'pending' },
   courierDetails: {
     courierName: String,
     trackingNumber: String,
@@ -182,6 +163,11 @@ const orderSchema = new mongoose.Schema({
     updatedBy: String,
     notes: String
   }],
+  paymentDetails: {
+    razorpay_payment_id: String,
+    razorpay_order_id: String,
+    razorpay_signature: String,
+  },
   couponCode: String,
   discount: { type: Number, default: 0 },
   shippingCost: { type: Number, default: 0 },
@@ -220,6 +206,34 @@ const authenticateToken = async (req, res, next) => {
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };
+
+// CSRF Protection
+const csrfTokens = new Map();
+
+const generateCSRFToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+const csrfProtection = (req, res, next) => {
+  if (req.method === 'GET') return next();
+  
+  const token = req.headers['x-csrf-token'];
+  const sessionId = req.headers['authorization'];
+  
+  if (!token || !csrfTokens.has(sessionId) || csrfTokens.get(sessionId) !== token) {
+    return res.status(403).json({ error: 'Invalid CSRF token' });
+  }
+  
+  next();
+};
+
+// CSRF token endpoint (requires authentication)
+app.get('/api/csrf-token', authenticateToken, (req, res) => {
+  const token = generateCSRFToken();
+  const sessionId = req.headers['authorization'];
+  csrfTokens.set(sessionId, token);
+  res.json({ csrfToken: token });
+});
 
 // Input validation middleware
 const validateInput = (req, res, next) => {
@@ -266,7 +280,6 @@ app.get('/api/products/:id', async (req, res) => {
 
 // User registration
 app.post('/api/register', 
-  authLimiter,
   [
     body('email').isEmail().normalizeEmail(),
     body('password').isLength({ min: 6 }),
@@ -304,7 +317,6 @@ app.post('/api/register',
 
 // User login
 app.post('/api/login',
-  authLimiter,
   [
     body('email').isEmail().normalizeEmail(),
     body('password').exists()
@@ -342,7 +354,7 @@ app.post('/api/login',
 );
 
 // Add item to cart (for logged-in users)
-app.post('/api/cart/add', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/cart/add', authenticateToken, async (req, res) => {
   try {
     const { productId, quantity = 1 } = req.body;
     
@@ -401,18 +413,14 @@ app.post('/api/checkout',
   validateInput,
   async (req, res) => {
     try {
-      const { items, total, shippingCost = 0, tax = 0, discount = 0 } = req.body;
+      const { items, total } = req.body;
 
       // Validate all products exist and calculate total
       let calculatedTotal = 0;
       const orderItems = [];
 
       for (const item of items) {
-        // The items from the cart/buy-now state might have different structures
-        const productId = item.productId || item._id;
-        if (!productId) continue;
-
-        const product = await Product.findById(productId);
+        const product = await Product.findById(item._id);
         if (!product) {
           return res.status(404).json({ error: `Product ${item.name} not found` });
         }
@@ -428,12 +436,9 @@ app.post('/api/checkout',
       }
 
       // Verify total matches
-      if (Math.abs(calculatedTotal - total) > 0.01) { // 'total' from frontend is subtotal
+      if (Math.abs(calculatedTotal - total) > 0.01) {
         return res.status(400).json({ error: 'Total amount mismatch' });
       }
-
-      // Calculate the final grand total for the order
-      const grandTotal = calculatedTotal + shippingCost + tax - discount;
 
       // Generate order number
       const now = new Date();
@@ -451,13 +456,20 @@ app.post('/api/checkout',
         orderNumber,
         userId: req.user._id,
         items: orderItems,
-        total: grandTotal, // Save the final grand total
+        total: calculatedTotal,
         status: 'pending',
         shippingAddress: req.body.shippingAddress,
+        paymentMethod: req.body.paymentMethod || 'cod',
+        paymentStatus: req.body.paymentMethod !== 'cod' ? 'received' : 'pending',
         couponCode: req.body.couponCode,
-        discount: discount,
-        shippingCost: shippingCost,
-        tax: req.body.tax || 0
+        discount: req.body.discount || 0,
+        shippingCost: req.body.shippingCost || 0,
+        tax: req.body.tax || 0,
+        paymentDetails: {
+          razorpay_payment_id: req.body.razorpay_payment_id,
+          razorpay_order_id: req.body.razorpay_order_id,
+          razorpay_signature: req.body.razorpay_signature,
+        }
       });
 
       await order.save();
@@ -479,12 +491,66 @@ app.post('/api/checkout',
       res.json({ 
         message: 'Order placed successfully', 
         orderId: order._id,
-        total: grandTotal
+        total: calculatedTotal
       });
     } catch (error) {
       res.status(500).json({ error: 'Checkout failed' });
     }
   }
+);
+
+// Create Razorpay Order
+app.post('/api/payment/create-order', authenticateToken, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const options = {
+      amount: Math.round(amount * 100), // amount in the smallest currency unit
+      currency: "INR",
+      receipt: `receipt_order_${crypto.randomBytes(4).toString('hex')}`
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    if (!order) {
+      return res.status(500).send("Error creating Razorpay order");
+    }
+
+    res.json({
+      orderId: order.id,
+      amount: order.amount,
+      keyId: process.env.RAZORPAY_KEY_ID
+    });
+  } catch (error) {
+    res.status(500).send("Error creating Razorpay order");
+  }
+});
+
+// Verify Razorpay Payment
+app.post('/api/payment/verify', async (req, res) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(body.toString())
+      .digest('hex');
+
+    if (expectedSignature === razorpay_signature) {
+      res.json({ success: true, message: "Payment verified successfully" });
+    } else {
+      res.status(400).json({ success: false, message: "Payment verification failed" });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Payment verification failed' });
+  }
+});
+
+app.post('/api/create-admin', async (req, res) => {
+  // This endpoint is intentionally left less secure for initial setup.
+  // In a real production environment, this should be removed or heavily secured.
+  // ... (implementation from server11.js can be copied here if needed)
+}
 );
 
 // Update order status (for admin/testing)
@@ -519,11 +585,23 @@ app.patch('/api/orders/:id/status',
 
       order.status = status;
 
-      // If status is processing, reduce stock
-      if (status === 'processing') {
-        // Reduce stock
+      // If a COD order is marked as delivered, automatically mark payment as received
+      if (status === 'delivered' && order.paymentMethod === 'cod') {
+        order.paymentStatus = 'received';
+      }
+
+      // If status is shipped, update courier details and reduce stock
+      if (status === 'shipped' && (courierName || trackingNumber)) {
+        order.courierDetails = {
+          courierName: courierName || order.courierDetails?.courierName,
+          trackingNumber: trackingNumber || order.courierDetails?.trackingNumber,
+          estimatedDelivery: estimatedDelivery ? new Date(estimatedDelivery) : order.courierDetails?.estimatedDelivery,
+          shippedAt: new Date()
+        };
+        
+        // Reduce stock when shipped
         for (const item of order.items) {
-          if (item.selectedVariant && item.selectedVariant.size && item.selectedVariant.color) {
+          if (item.selectedVariant) {
             // Reduce variant stock
             await Product.findOneAndUpdate(
               { 
@@ -539,13 +617,6 @@ app.patch('/api/orders/:id/status',
               $inc: { stock: -item.quantity }
             });
           }
-        }
-      } else if (status === 'shipped' && (courierName || trackingNumber)) {
-        order.courierDetails = {
-          courierName: courierName || order.courierDetails?.courierName,
-          trackingNumber: trackingNumber || order.courierDetails?.trackingNumber,
-          estimatedDelivery: estimatedDelivery ? new Date(estimatedDelivery) : order.courierDetails?.estimatedDelivery,
-          shippedAt: new Date()
         }
       }
 
@@ -634,6 +705,7 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 // Update user profile
 app.put('/api/profile',
   authenticateToken,
+  csrfProtection,
   [
     body('name').trim().isLength({ min: 1 }),
     body('email').isEmail().normalizeEmail(),
@@ -668,6 +740,7 @@ app.put('/api/profile',
 // Change password
 app.put('/api/change-password',
   authenticateToken,
+  csrfProtection,
   [
     body('currentPassword').exists(),
     body('newPassword').isLength({ min: 6 })
@@ -697,6 +770,7 @@ app.put('/api/change-password',
 // Add address
 app.post('/api/addresses',
   authenticateToken,
+  csrfProtection,
   [
     body('street').trim().isLength({ min: 1 }),
     body('city').trim().isLength({ min: 1 })
@@ -718,7 +792,7 @@ app.post('/api/addresses',
 );
 
 // Delete address
-app.delete('/api/addresses/:id', authenticateToken, async (req, res) => {
+app.delete('/api/addresses/:id', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const user = await User.findById(req.user._id);
     user.addresses = user.addresses.filter(addr => addr._id.toString() !== req.params.id);
@@ -794,7 +868,7 @@ app.get('/api/admin/products', authenticateToken, adminAuth, async (req, res) =>
 });
 
 // Admin - Add product
-app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) => {
+app.post('/api/admin/products', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const product = new Product(req.body);
     await product.save();
@@ -805,7 +879,7 @@ app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) =
 });
 
 // Admin - Update product
-app.put('/api/admin/products/:id', authenticateToken, adminAuth, async (req, res) => {
+app.put('/api/admin/products/:id', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json({ message: 'Product updated successfully', product });
@@ -815,7 +889,7 @@ app.put('/api/admin/products/:id', authenticateToken, adminAuth, async (req, res
 });
 
 // Admin - Toggle product status
-app.patch('/api/admin/products/:id/toggle', authenticateToken, adminAuth, async (req, res) => {
+app.patch('/api/admin/products/:id/toggle', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const { enabled } = req.body;
     const product = await Product.findByIdAndUpdate(req.params.id, { enabled }, { new: true });
@@ -828,7 +902,7 @@ app.patch('/api/admin/products/:id/toggle', authenticateToken, adminAuth, async 
 // Admin - Get all orders
 app.get('/api/admin/orders', authenticateToken, adminAuth, async (req, res) => {
   try {
-    const orders = await Order.find().sort({ createdAt: -1 }).populate('userId', 'name email');
+    const orders = await Order.find().sort({ createdAt: -1 }).populate('userId', 'name email phone');
     res.json(orders);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch orders' });
@@ -878,7 +952,7 @@ app.get('/api/admin/users', authenticateToken, adminAuth, async (req, res) => {
 });
 
 // Admin - Create coupon
-app.post('/api/admin/coupons', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.post('/api/admin/coupons', authenticateToken, adminAuth, async (req, res) => {
   try {
     const allowedFields = ['code', 'discount', 'type', 'minAmount', 'maxDiscount', 'expiryDate', 'oneTimeUse'];
     const couponData = {};
@@ -922,7 +996,7 @@ app.get('/api/admin/coupons/report', authenticateToken, adminAuth, async (req, r
 });
 
 // Apply coupon
-app.post('/api/apply-coupon', authenticateToken, async (req, res) => {
+app.post('/api/apply-coupon', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const { code, total } = req.body;
     const coupon = await Coupon.findOne({ 
@@ -971,7 +1045,7 @@ app.get('/api/shipping-cost', async (req, res) => {
 });
 
 // Add product rating
-app.post('/api/products/:id/rating', authenticateToken, async (req, res) => {
+app.post('/api/products/:id/rating', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const { rating, review } = req.body;
     const productId = req.params.id;
@@ -1013,7 +1087,7 @@ app.post('/api/products/:id/rating', authenticateToken, async (req, res) => {
 });
 
 // Admin - Update shipping cost
-app.put('/api/admin/shipping', authenticateToken, adminAuth, async (req, res) => {
+app.put('/api/admin/shipping', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const { cost } = req.body;
     await Settings.findOneAndUpdate({}, { shippingCost: cost }, { upsert: true });
@@ -1034,7 +1108,7 @@ app.get('/api/banner', async (req, res) => {
 });
 
 // Admin - Update banner
-app.put('/api/admin/banner', authenticateToken, adminAuth, async (req, res) => {
+app.put('/api/admin/banner', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const banner = await Banner.findOneAndUpdate(
       { isActive: true },
@@ -1051,11 +1125,10 @@ app.put('/api/admin/banner', authenticateToken, adminAuth, async (req, res) => {
 app.get('/api/wishlist', authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).populate('wishlist');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    // Return the populated wishlist array directly
-    res.json(user.wishlist || []);
+    res.json({ 
+      wishlist: user.wishlist || [],
+      products: user.wishlist || []
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to get wishlist' });
   }
@@ -1076,7 +1149,7 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
 });
 
 // Update user's cart
-app.post('/api/cart', authenticateToken, async (req, res) => {
+app.post('/api/cart', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const { cart } = req.body;
     const user = await User.findById(req.user._id);
@@ -1092,7 +1165,7 @@ app.post('/api/cart', authenticateToken, async (req, res) => {
 });
 
 // Add to wishlist
-app.post('/api/wishlist/:id', authenticateToken, async (req, res) => {
+app.post('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const productId = req.params.id;
     const user = await User.findById(req.user._id);
@@ -1111,7 +1184,7 @@ app.post('/api/wishlist/:id', authenticateToken, async (req, res) => {
 });
 
 // Remove from wishlist
-app.delete('/api/wishlist/:id', authenticateToken, async (req, res) => {
+app.delete('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const productId = req.params.id;
     const user = await User.findById(req.user._id);
@@ -1165,7 +1238,7 @@ app.get('/api/admin/contacts', authenticateToken, adminAuth, async (req, res) =>
 });
 
 // Admin - Update contact message status
-app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, async (req, res) => {
+app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
     const { status } = req.body;
     await Contact.findByIdAndUpdate(req.params.id, { status });
@@ -1176,7 +1249,7 @@ app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, async 
 });
 
 // Create admin account (bypasses rate limiting)
-app.post('/api/create-admin', async (req, res) => {
+app.post('/api/create-admin', csrfProtection, async (req, res) => {
   try {
     const adminEmail = 'admin@samriddhishop.com';
     const { password } = req.body;
