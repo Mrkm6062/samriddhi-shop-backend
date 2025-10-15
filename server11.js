@@ -142,6 +142,7 @@ const orderSchema = new mongoose.Schema({
     zipCode: String,
     country: String
   },
+  paymentMethod: { type: String, default: 'cod' },
   courierDetails: {
     courierName: String,
     trackingNumber: String,
@@ -445,6 +446,7 @@ app.post('/api/checkout',
         total: calculatedTotal,
         status: 'pending',
         shippingAddress: req.body.shippingAddress,
+        paymentMethod: req.body.paymentMethod || 'cod',
         couponCode: req.body.couponCode,
         discount: req.body.discount || 0,
         shippingCost: req.body.shippingCost || 0,
