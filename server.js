@@ -670,7 +670,7 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [dailyStats, weeklySales, totalRevenueResult, statusCounts] = await Promise.all([
+    const [dailyStats, weeklySales, totalRevenueResult, statusCounts, totalOrders] = await Promise.all([
       Order.aggregate([
         { $match: { createdAt: { $gte: startOfDay, $lte: endOfDay } } },
         {
@@ -694,7 +694,8 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
       ]),
       Order.aggregate([
         { $group: { _id: '$status', count: { $sum: 1 } } }
-      ])
+      ]),
+      Order.countDocuments()
     ]);
 
     const todayAnalytics = {
@@ -722,7 +723,8 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
       today: todayAnalytics,
       statusCounts,
       totalRevenue: totalRevenueResult[0]?.total || 0,
-      weeklySales: weeklySales || []
+      weeklySales: weeklySales || [],
+      totalOrders: totalOrders || 0
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch analytics' });
