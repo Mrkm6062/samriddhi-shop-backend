@@ -661,31 +661,55 @@ app.get('/api/admin/orders/date-range', authenticateToken, adminAuth, async (req
 app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) => {
   try {
     const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const startOfWeek = new Date(today.setDate(today.getDate() - 7));
-    const startOfMonth = new Date(today.setMonth(today.getMonth() - 1));
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
     
-    const [todayOrders, weekOrders, monthOrders, totalOrders, statusCounts] = await Promise.all([
-      Order.countDocuments({ createdAt: { $gte: startOfDay } }),
-      Order.countDocuments({ createdAt: { $gte: startOfWeek } }),
-      Order.countDocuments({ createdAt: { $gte: startOfMonth } }),
-      Order.countDocuments(),
+    const [dailyStats, totalRevenueResult, statusCounts] = await Promise.all([
+      Order.aggregate([
+        { $match: { createdAt: { $gte: startOfDay, $lte: endOfDay } } },
+        {
+          $group: {
+            _id: "$paymentMethod",
+            count: { $sum: 1 },
+            totalAmount: { $sum: "$total" }
+          }
+        }
+      ]),
+      Order.aggregate([
+        { $group: { _id: null, total: { $sum: '$total' } } }
+      ]),
       Order.aggregate([
         { $group: { _id: '$status', count: { $sum: 1 } } }
       ])
     ]);
-    
-    const revenue = await Order.aggregate([
-      { $group: { _id: null, total: { $sum: '$total' } } }
-    ]);
+
+    const todayAnalytics = {
+      totalOrders: 0,
+      totalRevenue: 0,
+      codOrders: 0,
+      codRevenue: 0,
+      prepaidOrders: 0,
+      prepaidRevenue: 0,
+    };
+
+    dailyStats.forEach(group => {
+      todayAnalytics.totalOrders += group.count;
+      todayAnalytics.totalRevenue += group.totalAmount;
+      if (group._id === 'cod') {
+        todayAnalytics.codOrders = group.count;
+        todayAnalytics.codRevenue = group.totalAmount;
+      } else {
+        todayAnalytics.prepaidOrders += group.count;
+        todayAnalytics.prepaidRevenue += group.totalAmount;
+      }
+    });
     
     res.json({
-      todayOrders,
-      weekOrders,
-      monthOrders,
-      totalOrders,
+      today: todayAnalytics,
       statusCounts,
-      totalRevenue: revenue[0]?.total || 0
+      totalRevenue: totalRevenueResult[0]?.total || 0
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch analytics' });
