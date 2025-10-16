@@ -670,7 +670,7 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [dailyStats, totalRevenueResult, statusCounts, weeklySales] = await Promise.all([
+    const [dailyStats, weeklySales, totalRevenueResult, statusCounts] = await Promise.all([
       Order.aggregate([
         { $match: { createdAt: { $gte: startOfDay, $lte: endOfDay } } },
         {
