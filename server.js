@@ -666,16 +666,11 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
     const endOfDay = new Date();
     endOfDay.setHours(23, 59, 59, 999);
     
-    const { salesRange = '7' } = req.query; // Default to 7 days
-    const salesMatch = {};
-    if (salesRange !== 'all') {
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - parseInt(salesRange));
-      startDate.setHours(0, 0, 0, 0);
-      salesMatch.createdAt = { $gte: startDate };
-    }
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [dailyStats, salesByDay, totalRevenueResult, statusCounts] = await Promise.all([
+    const [dailyStats, weeklySales, totalRevenueResult, statusCounts] = await Promise.all([
       Order.aggregate([
         { $match: { createdAt: { $gte: startOfDay, $lte: endOfDay } } },
         {
@@ -687,7 +682,7 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
         }
       ]),
       Order.aggregate([
-        { $match: salesMatch },
+        { $match: { createdAt: { $gte: sevenDaysAgo } } },
         { $group: {
             _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
             totalSales: { $sum: "$total" }
@@ -727,7 +722,7 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
       today: todayAnalytics,
       statusCounts,
       totalRevenue: totalRevenueResult[0]?.total || 0,
-      salesByDay: salesByDay || []
+      weeklySales: weeklySales || []
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch analytics' });
