@@ -9,6 +9,7 @@ import { body, validationResult } from 'express-validator';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -53,6 +54,15 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/samriddhi
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// Nodemailer transporter
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.MAIL_ID,
+    pass: process.env.APP_PASSWORD,
+  },
 });
 
 // User Schema
@@ -244,6 +254,49 @@ const validateInput = (req, res, next) => {
   next();
 };
 
+// Temporary storage for registration OTPs
+const otpStore = new Map();
+
+// Send OTP for registration
+app.post('/api/register/send-otp', 
+  [ body('email').isEmail().normalizeEmail() ],
+  validateInput,
+  async (req, res) => {
+    try {
+      const { email } = req.body;
+
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(400).json({ error: 'User with this email already exists' });
+      }
+
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
+
+      otpStore.set(email, { otp, expiresAt });
+
+      const mailOptions = {
+        from: process.env.MAIL_ID,
+        to: email,
+        subject: 'Your OTP for SamriddhiShop Registration',
+        html: `
+          <div style="font-family: sans-serif; text-align: center; padding: 20px;">
+            <h2>Welcome to SamriddhiShop!</h2>
+            <p>Your One-Time Password (OTP) for registration is:</p>
+            <p style="font-size: 24px; font-weight: bold; letter-spacing: 5px; margin: 20px 0; background: #f0f0f0; padding: 10px; border-radius: 5px;">${otp}</p>
+            <p>This OTP is valid for 10 minutes.</p>
+          </div>
+        `,
+      };
+
+      await transporter.sendMail(mailOptions);
+
+      res.json({ message: 'OTP sent to your email successfully.' });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to send OTP' });
+    }
+});
+
 // Admin middleware
 const adminAuth = (req, res, next) => {
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@samriddhishop.com';
@@ -282,17 +335,26 @@ app.get('/api/products/:id', async (req, res) => {
 app.post('/api/register', 
   [
     body('email').isEmail().normalizeEmail(),
-    body('password').isLength({ min: 6 }),
-    body('name').trim().isLength({ min: 1 })
+    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters long'),
+    body('name').trim().isLength({ min: 1 }).withMessage('Name is required'),
+    body('otp').isLength({ min: 6, max: 6 }).withMessage('OTP must be 6 digits')
   ],
   validateInput,
   async (req, res) => {
     try {
-      const { name, email, password } = req.body;
+      const { name, email, password, otp } = req.body;
 
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         return res.status(400).json({ error: 'User already exists' });
+      }
+
+      const storedOtpData = otpStore.get(email);
+      if (!storedOtpData || storedOtpData.otp !== otp) {
+        return res.status(400).json({ error: 'Invalid OTP' });
+      }
+      if (Date.now() > storedOtpData.expiresAt) {
+        return res.status(400).json({ error: 'OTP has expired' });
       }
 
       const user = new User({ name, email, password });
@@ -303,6 +365,9 @@ app.post('/api/register',
         process.env.JWT_SECRET || 'fallback_secret_key',
         { expiresIn: '7d' }
       );
+
+      // Clean up OTP store
+      otpStore.delete(email);
 
       res.status(201).json({
         message: 'User created successfully',
