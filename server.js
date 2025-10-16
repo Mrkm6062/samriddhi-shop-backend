@@ -65,6 +65,15 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// Verify nodemailer connection
+transporter.verify(function(error, success) {
+  if (error) {
+    console.error('Nodemailer verification error:', error);
+  } else {
+    console.log('Nodemailer is ready to send emails');
+  }
+});
+
 // User Schema
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
