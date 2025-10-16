@@ -828,6 +828,10 @@ const Coupon = mongoose.model('Coupon', couponSchema);
 // Settings Schema
 const settingsSchema = new mongoose.Schema({
   shippingCost: { type: Number, default: 0 },
+  phone: { type: String, default: '+91 9876543210' },
+  email: { type: String, default: 'support@samriddhishop.com' },
+  instagram: { type: String, default: '#' },
+  facebook: { type: String, default: '#' },
   updatedAt: { type: Date, default: Date.now }
 });
 
@@ -1034,13 +1038,24 @@ app.post('/api/apply-coupon', authenticateToken, csrfProtection, async (req, res
   }
 });
 
-// Get shipping cost
-app.get('/api/shipping-cost', async (req, res) => {
+// Get all public settings
+app.get('/api/settings', async (req, res) => {
   try {
     const settings = await Settings.findOne();
-    res.json({ cost: settings?.shippingCost || 0 });
+    res.json(settings || {});
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch shipping cost' });
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+// Admin - Update settings
+app.put('/api/admin/settings', authenticateToken, adminAuth, async (req, res) => {
+  try {
+    const settings = await Settings.findOneAndUpdate({}, req.body, { upsert: true, new: true });
+    res.json({ message: 'Settings updated successfully', settings });
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    res.status(500).json({ error: 'Failed to update settings' });
   }
 });
 
@@ -1083,17 +1098,6 @@ app.post('/api/products/:id/rating', authenticateToken, csrfProtection, async (r
     res.json({ message: 'Rating added successfully', averageRating: product.averageRating });
   } catch (error) {
     res.status(500).json({ error: 'Failed to add rating' });
-  }
-});
-
-// Admin - Update shipping cost
-app.put('/api/admin/shipping', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
-  try {
-    const { cost } = req.body;
-    await Settings.findOneAndUpdate({}, { shippingCost: cost }, { upsert: true });
-    res.json({ message: 'Shipping cost updated successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update shipping cost' });
   }
 });
 
