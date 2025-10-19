@@ -876,10 +876,16 @@ const Settings = mongoose.model('Settings', settingsSchema);
 
 // Banner Schema
 const bannerSchema = new mongoose.Schema({
-  title: { type: String, default: 'Welcome to SamriddhiShop' },
-  subtitle: { type: String, default: 'Discover amazing products at great prices' },
-  buttonText: { type: String, default: 'Shop Now' },
-  backgroundImage: { type: String, default: '' },
+  desktop: {
+    title: { type: String, default: 'Welcome to SamriddhiShop' },
+    subtitle: { type: String, default: 'Discover amazing products at great prices' },
+    backgroundImage: { type: String, default: '' },
+  },
+  mobile: {
+    title: { type: String, default: 'Welcome to SamriddhiShop' },
+    subtitle: { type: String, default: 'Amazing products, great prices' },
+    backgroundImage: { type: String, default: '' },
+  },
   isActive: { type: Boolean, default: true },
   updatedAt: { type: Date, default: Date.now }
 });
