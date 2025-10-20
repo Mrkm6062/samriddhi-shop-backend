@@ -865,10 +865,10 @@ const Coupon = mongoose.model('Coupon', couponSchema);
 // Settings Schema
 const settingsSchema = new mongoose.Schema({
   shippingCost: { type: Number, default: 0 },
-  phone: { type: String, default: '+91 9876543210' },
+  phone: { type: String, default: '+91 9580889615' },
   email: { type: String, default: 'support@samriddhishop.com' },
-  instagram: { type: String, default: '#' },
-  facebook: { type: String, default: '#' },
+  instagram: { type: String, default: 'https://www.instagram.com/samriddhishop?igsh=cGU3bWFiajN2emM3' },
+  facebook: { type: String, default: 'https://www.facebook.com/profile.php?id=61582670666605' },
   updatedAt: { type: Date, default: Date.now }
 });
 
