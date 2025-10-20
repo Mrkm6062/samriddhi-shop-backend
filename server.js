@@ -413,10 +413,10 @@ app.post('/api/checkout',
   validateInput,
   async (req, res) => {
     try {
-      const { items, total } = req.body;
+      const { items, total, discount, shippingCost, tax } = req.body;
 
       // Validate all products exist and calculate total
-      let calculatedTotal = 0;
+      let subtotal = 0;
       const orderItems = [];
 
       for (const item of items) {
@@ -425,7 +425,7 @@ app.post('/api/checkout',
           return res.status(404).json({ error: `Product ${item.name} not found` });
         }
         
-        calculatedTotal += product.price * item.quantity;
+        subtotal += product.price * item.quantity;
         orderItems.push({
           productId: product._id,
           name: product.name,
@@ -435,9 +435,13 @@ app.post('/api/checkout',
         });
       }
 
+      // Recalculate the final total on the backend for security
+      const calculatedTotal = subtotal + (shippingCost || 0) - (discount || 0) + (tax || 0);
+
       // Verify total matches
       if (Math.abs(calculatedTotal - total) > 0.01) {
-        return res.status(400).json({ error: 'Total amount mismatch' });
+        console.error(`Total mismatch: Frontend total: ${total}, Backend calculated: ${calculatedTotal}`);
+        return res.status(400).json({ error: 'Total amount mismatch. Please try again.' });
       }
 
       // Generate order number
@@ -456,7 +460,7 @@ app.post('/api/checkout',
         orderNumber,
         userId: req.user._id,
         items: orderItems,
-        total: calculatedTotal,
+        total: total, // Use the verified total from the request
         status: 'pending',
         shippingAddress: req.body.shippingAddress,
         paymentMethod: req.body.paymentMethod || 'cod',
@@ -491,7 +495,7 @@ app.post('/api/checkout',
       res.json({ 
         message: 'Order placed successfully', 
         orderId: order._id,
-        total: calculatedTotal
+        total: total
       });
     } catch (error) {
       res.status(500).json({ error: 'Checkout failed' });
