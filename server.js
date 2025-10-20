@@ -21,7 +21,8 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'https://samriddhishop.netlify.app',
-    process.env.FRONTEND_URL
+    process.env.FRONTEND_URL,
+    'https://samriddhishop.in'
   ].filter(Boolean),
   credentials: true
 }));
