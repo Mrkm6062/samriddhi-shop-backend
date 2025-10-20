@@ -283,19 +283,20 @@ app.post('/api/register',
   [
     body('email').isEmail().normalizeEmail(),
     body('password').isLength({ min: 6 }),
-    body('name').trim().isLength({ min: 1 })
+    body('name').trim().isLength({ min: 1 }),
+    body('phone').trim().isLength({ min: 10 }).withMessage('Phone number must be at least 10 digits')
   ],
   validateInput,
   async (req, res) => {
     try {
-      const { name, email, password } = req.body;
+      const { name, email, password, phone } = req.body;
 
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         return res.status(400).json({ error: 'User already exists' });
       }
 
-      const user = new User({ name, email, password });
+      const user = new User({ name, email, password, phone });
       await user.save();
 
       const token = jwt.sign(
