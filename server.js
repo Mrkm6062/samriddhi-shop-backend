@@ -962,7 +962,10 @@ app.post('/api/admin/products', authenticateToken, adminAuth, csrfProtection, as
     await product.save();
     res.json({ message: 'Product added successfully', product });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to add product' });
+    // Log the detailed error on the server for debugging
+    console.error('Error adding product:', error); 
+    // Send a more descriptive error to the client
+    res.status(500).json({ error: 'Failed to add product. Please check all fields.', details: error.message });
   }
 });
 
