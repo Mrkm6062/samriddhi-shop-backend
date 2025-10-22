@@ -5,10 +5,10 @@ import jwt from 'jsonwebtoken';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
-import { body, validationResult } from 'express-validator';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
+import { z } from 'zod';
 
 dotenv.config();
 
@@ -236,13 +236,28 @@ app.get('/api/csrf-token', authenticateToken, (req, res) => {
   res.json({ csrfToken: token });
 });
 
-// Input validation middleware
-const validateInput = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
+// Zod validation middleware
+const validate = (schema) => (req, res, next) => {
+  try {
+    schema.parse({
+      body: req.body,
+      query: req.query,
+      params: req.params,
+    });
+    next();
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        errors: error.errors.map((err) => ({
+          msg: err.message,
+          param: err.path.slice(1).join('.'), // e.g., body.email
+          location: err.path[0], // e.g., body
+        })),
+      });
+    }
+    // Handle other unexpected errors
+    res.status(500).json({ error: 'Internal server error' });
   }
-  next();
 };
 
 // Admin middleware
@@ -279,15 +294,19 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
+// Zod schema for user registration
+const registerSchema = z.object({
+  body: z.object({
+    name: z.string().trim().min(1, { message: 'Name is required' }),
+    email: z.string().email({ message: 'Invalid email address' }),
+    password: z.string().min(6, { message: 'Password must be at least 6 characters long' }),
+    phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' })
+  })
+});
+
 // User registration
 app.post('/api/register', 
-  [
-    body('email').isEmail().normalizeEmail(),
-    body('password').isLength({ min: 6 }),
-    body('name').trim().isLength({ min: 1 }),
-    body('phone').trim().isLength({ min: 10 }).withMessage('Phone number must be at least 10 digits')
-  ],
-  validateInput,
+  validate(registerSchema),
   async (req, res) => {
     try {
       const { name, email, password, phone } = req.body;
@@ -317,13 +336,16 @@ app.post('/api/register',
   }
 );
 
+// Zod schema for user login
+const loginSchema = z.object({
+  body: z.object({
+    email: z.string().email({ message: 'Invalid email address' }),
+    password: z.string().min(1, { message: 'Password is required' })
+  })
+});
+
 // User login
-app.post('/api/login',
-  [
-    body('email').isEmail().normalizeEmail(),
-    body('password').exists()
-  ],
-  validateInput,
+app.post('/api/login', validate(loginSchema),
   async (req, res) => {
     try {
       const { email, password } = req.body;
@@ -405,14 +427,16 @@ app.get('/api/orders/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// Zod schema for checkout
+const checkoutSchema = z.object({
+  body: z.object({
+    items: z.array(z.any()).min(1, { message: 'Checkout must include at least one item' }),
+    total: z.number().min(0, { message: 'Total must be a positive number' })
+  })
+});
+
 // Checkout
-app.post('/api/checkout', 
-  authenticateToken,
-  [
-    body('items').isArray({ min: 1 }),
-    body('total').isNumeric({ min: 0 })
-  ],
-  validateInput,
+app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
   async (req, res) => {
     try {
       const { items, total, discount, shippingCost, tax } = req.body;
@@ -559,13 +583,15 @@ app.post('/api/create-admin', async (req, res) => {
 }
 );
 
+// Zod schema for order status update
+const updateOrderStatusSchema = z.object({
+  body: z.object({
+    status: z.enum(['pending', 'processing', 'shipped', 'delivered'])
+  })
+});
+
 // Update order status (for admin/testing)
-app.patch('/api/orders/:id/status', 
-  authenticateToken,
-  [
-    body('status').isIn(['pending', 'processing', 'shipped', 'delivered'])
-  ],
-  validateInput,
+app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatusSchema),
   async (req, res) => {
     try {
       const { status, courierName, trackingNumber, estimatedDelivery, notes } = req.body;
@@ -745,16 +771,17 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
   }
 });
 
+// Zod schema for profile update
+const updateProfileSchema = z.object({
+  body: z.object({
+    name: z.string().trim().min(1, { message: 'Name is required' }),
+    email: z.string().email({ message: 'Invalid email address' }),
+    phone: z.string().trim().optional()
+  })
+});
+
 // Update user profile
-app.put('/api/profile',
-  authenticateToken,
-  csrfProtection,
-  [
-    body('name').trim().isLength({ min: 1 }),
-    body('email').isEmail().normalizeEmail(),
-    body('phone').optional().trim()
-  ],
-  validateInput,
+app.put('/api/profile', authenticateToken, csrfProtection, validate(updateProfileSchema),
   async (req, res) => {
     try {
       const { name, email, phone } = req.body;
@@ -780,15 +807,16 @@ app.put('/api/profile',
   }
 );
 
+// Zod schema for password change
+const changePasswordSchema = z.object({
+  body: z.object({
+    currentPassword: z.string().min(1, { message: 'Current password is required' }),
+    newPassword: z.string().min(6, { message: 'New password must be at least 6 characters long' })
+  })
+});
+
 // Change password
-app.put('/api/change-password',
-  authenticateToken,
-  csrfProtection,
-  [
-    body('currentPassword').exists(),
-    body('newPassword').isLength({ min: 6 })
-  ],
-  validateInput,
+app.put('/api/change-password', authenticateToken, csrfProtection, validate(changePasswordSchema),
   async (req, res) => {
     try {
       const { currentPassword, newPassword } = req.body;
@@ -810,15 +838,16 @@ app.put('/api/change-password',
   }
 );
 
+// Zod schema for adding an address
+const addAddressSchema = z.object({
+  body: z.object({
+    street: z.string().trim().min(1, { message: 'Street is required' }),
+    city: z.string().trim().min(1, { message: 'City is required' })
+  })
+});
+
 // Add address
-app.post('/api/addresses',
-  authenticateToken,
-  csrfProtection,
-  [
-    body('street').trim().isLength({ min: 1 }),
-    body('city').trim().isLength({ min: 1 })
-  ],
-  validateInput,
+app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddressSchema),
   async (req, res) => {
     try {
       const { street, city, state, zipCode, country } = req.body;
@@ -1251,15 +1280,18 @@ app.delete('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, r
   }
 });
 
+// Zod schema for contact form
+const contactSchemaZod = z.object({
+  body: z.object({
+    name: z.string().trim().min(1, { message: 'Name is required' }),
+    email: z.string().email({ message: 'Invalid email address' }),
+    subject: z.string().trim().min(1, { message: 'Subject is required' }),
+    message: z.string().trim().min(10, { message: 'Message must be at least 10 characters long' })
+  })
+});
+
 // Contact form submission
-app.post('/api/contact',
-  [
-    body('name').trim().isLength({ min: 1 }),
-    body('email').isEmail().normalizeEmail(),
-    body('subject').trim().isLength({ min: 1 }),
-    body('message').trim().isLength({ min: 10 })
-  ],
-  validateInput,
+app.post('/api/contact', validate(contactSchemaZod),
   async (req, res) => {
     try {
       const { name, email, subject, message } = req.body;
