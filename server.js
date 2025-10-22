@@ -664,7 +664,7 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
 // Get orders by date range for admin
 app.get('/api/admin/orders/date-range', authenticateToken, adminAuth, async (req, res) => {
   try {
-    const { startDate, endDate, status } = req.query;
+    const { startDate, endDate, status, searchTerm } = req.query;
     
     let query = {};
     
@@ -677,6 +677,10 @@ app.get('/api/admin/orders/date-range', authenticateToken, adminAuth, async (req
     
     if (status && status !== 'all') {
       query.status = status;
+    }
+
+    if (searchTerm) {
+      query.orderNumber = { $regex: searchTerm, $options: 'i' };
     }
     
     const orders = await Order.find(query)
