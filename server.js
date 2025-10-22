@@ -919,11 +919,13 @@ const bannerSchema = new mongoose.Schema({
     title: { type: String, default: 'Welcome to SamriddhiShop' },
     subtitle: { type: String, default: 'Discover amazing products at great prices' },
     backgroundImage: { type: String, default: '' },
+    backgroundVideo: { type: String, default: '' },
   },
   mobile: {
     title: { type: String, default: 'Welcome to SamriddhiShop' },
     subtitle: { type: String, default: 'Amazing products, great prices' },
     backgroundImage: { type: String, default: '' },
+    backgroundVideo: { type: String, default: '' },
   },
   isActive: { type: Boolean, default: true },
   updatedAt: { type: Date, default: Date.now }
