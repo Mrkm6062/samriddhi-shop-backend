@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { z } from 'zod';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -60,6 +61,8 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
 // User Schema
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
@@ -79,7 +82,9 @@ const userSchema = new mongoose.Schema({
     country: { type: String, default: 'India' },
     createdAt: { type: Date, default: Date.now }
   }],
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  passwordResetToken: String,
+  passwordResetExpires: Date,
 });
 
 userSchema.pre('save', async function(next) {
@@ -554,6 +559,80 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
     }
   }
 );
+
+// --- Password Reset Routes ---
+
+// 1. Forgot Password - User requests a reset link
+app.post('/api/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      // To prevent email enumeration, we send a success response even if the user doesn't exist.
+      return res.json({ message: 'If a user with that email exists, a password reset link has been sent.' });
+    }
+
+    // Generate a reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.passwordResetExpires = Date.now() + 10 * 60 * 1000; // Token expires in 10 minutes
+
+    await user.save();
+
+    // Send the email
+    const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
+    const message = `You are receiving this email because you (or someone else) have requested the reset of a password. Please click on the following link, or paste this into your browser to complete the process:\n\n${resetUrl}\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
+
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST,
+      port: process.env.EMAIL_PORT,
+      secure: false, // true for 465, false for other ports
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: `"SamriddhiShop Support" <${process.env.EMAIL_USER}>`,
+      to: user.email,
+      subject: 'Password Reset Request',
+      text: message,
+    });
+
+    res.json({ message: 'If a user with that email exists, a password reset link has been sent.' });
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Error sending password reset email.' });
+  }
+});
+
+// 2. Reset Password - User submits a new password
+app.post('/api/reset-password/:token', async (req, res) => {
+  try {
+    const hashedToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
+
+    const user = await User.findOne({
+      passwordResetToken: hashedToken,
+      passwordResetExpires: { $gt: Date.now() },
+    });
+
+    if (!user) {
+      return res.status(400).json({ error: 'Password reset token is invalid or has expired.' });
+    }
+
+    user.password = req.body.password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+
+    res.json({ message: 'Password has been reset successfully.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reset password.' });
+  }
+});
 
 // Create Razorpay Order
 app.post('/api/payment/create-order', authenticateToken, async (req, res) => {
