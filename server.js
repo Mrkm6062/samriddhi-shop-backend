@@ -580,6 +580,12 @@ app.post('/api/forgot-password', async (req, res) => {
 
     await user.save();
 
+    // Check for email configuration before attempting to send
+    if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.error('FATAL: Email service is not configured. Please set EMAIL_HOST, EMAIL_USER, and EMAIL_PASS environment variables.');
+      return res.status(500).json({ error: 'Email service is not configured on the server.' });
+    }
+
     // Send the email
     const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
     const message = `You are receiving this email because you (or someone else) have requested the reset of a password. Please click on the following link, or paste this into your browser to complete the process:\n\n${resetUrl}\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
