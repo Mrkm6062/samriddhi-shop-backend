@@ -23,7 +23,7 @@ const pincodeSchema = new mongoose.Schema({
 });
 
 // Create a unique compound index to prevent duplicate entries
-pincodeSchema.index({ officeName: 1 }, { unique: true });
+pincodeSchema.index({ pincode: 1, officeName: 1 }, { unique: true });
 
 const Pincode = mongoose.model('Pincode', pincodeSchema);
 
@@ -60,17 +60,18 @@ const fetchAndSeedPincodes = async () => {
       if (records && records.length > 0) {
         const bulkOps = records.map(record => ({
           updateOne: {
-            filter: { officeName: record.officename },
+            filter: { pincode: parseInt(record.pincode, 10), officeName: record.officename },
             update: {
               $set: {
-                pincode: parseInt(record.pincode, 10),
                 officeType: record.officetype,
                 deliveryStatus: record.deliverystatus,
                 districtName: record.districtname,
                 stateName: record.statename,
               },
               // On initial insert, set the deliverable status
-              $setOnInsert: { deliverable: false }
+              $setOnInsert: { 
+                deliverable: false 
+              }
             },
             upsert: true // Insert if it doesn't exist, update if it does
           }
