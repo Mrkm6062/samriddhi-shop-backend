@@ -1455,7 +1455,11 @@ app.get('/api/admin/pincodes/search', authenticateToken, adminAuth, async (req, 
 
     if (state) query.stateName = state;
     if (district) query.districtName = district;
-    if (pincode) query.pincode = { $regex: `^${pincode}` };
+    // Corrected: Handle pincode as a number.
+    // The regex approach works for strings, but the schema has pincode as a Number.
+    if (pincode && /^\d+$/.test(pincode)) {
+      query.pincode = parseInt(pincode, 10);
+    }
 
     // Only execute query if at least one filter is provided
     if (Object.keys(query).length === 0) {
