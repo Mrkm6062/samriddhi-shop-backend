@@ -27,6 +27,13 @@ pincodeSchema.index({ pincode: 1, officeName: 1 }, { unique: true });
 
 const Pincode = mongoose.model('Pincode', pincodeSchema);
 
+// NEW: Schema for the pre-aggregated State-District map
+const stateDistrictMapSchema = new mongoose.Schema({
+  stateName: { type: String, required: true, unique: true },
+  districts: [{ type: String }]
+});
+
+const StateDistrictMap = mongoose.model('StateDistrictMap', stateDistrictMapSchema);
 
 const fetchAndSeedPincodes = async () => {
   if (!API_KEY) {
@@ -87,6 +94,23 @@ const fetchAndSeedPincodes = async () => {
         console.log('No more records to fetch.');
       }
     }
+
+    console.log('Pincode seeding finished. Now generating state-district map...');
+
+    // Use aggregation to get a structured list of states and their districts.
+    const stateDistrictData = await Pincode.aggregate([
+      { $group: { _id: { state: "$stateName", district: "$districtName" } } },
+      { $group: { _id: "$_id.state", districts: { $addToSet: "$_id.district" } } },
+      { $project: { _id: 0, stateName: "$_id", districts: { $sortArray: { input: "$districts", sortBy: 1 } } } },
+      { $sort: { stateName: 1 } }
+    ]);
+
+    // Clear the existing map and insert the new one
+    await StateDistrictMap.deleteMany({});
+    await StateDistrictMap.insertMany(stateDistrictData);
+
+    console.log('State-district map has been successfully generated and saved.');
+
 
     console.log(`Seeding complete! A total of ${totalRecords} pincode records have been processed.`);
   } catch (error) {

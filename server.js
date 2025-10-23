@@ -205,13 +205,6 @@ pincodeSchema.index({ pincode: 1, officeName: 1 }, { unique: true });
 
 const Pincode = mongoose.model('Pincode', pincodeSchema);
 
-// NEW: Schema for the pre-aggregated State-District map
-const stateDistrictMapSchema = new mongoose.Schema({
-  stateName: { type: String, required: true, unique: true },
-  districts: [{ type: String }]
-});
-const StateDistrictMap = mongoose.model('StateDistrictMap', stateDistrictMapSchema);
-
 // JWT Authentication middleware
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -1433,14 +1426,6 @@ app.get('/api/check-pincode/:pincode', async (req, res) => {
 // Admin route to get all delivery areas for management
 app.get('/api/admin/delivery-areas', authenticateToken, adminAuth, async (req, res) => {
   try {
-    // Use aggregation to get a structured list of states and their districts.
-    const stateDistrictMap = await Pincode.aggregate([
-      { $group: { _id: { state: "$stateName", district: "$districtName" } } },
-      { $group: { _id: "$_id.state", districts: { $addToSet: "$_id.district" } } },
-      { $project: { _id: 0, stateName: "$_id", districts: { $sortArray: { input: "$districts", sortBy: 1 } } } },
-      { $sort: { stateName: 1 } }
-    ]);
-    // Fetch the pre-aggregated and cached map. This is extremely fast.
     const stateDistrictMap = await StateDistrictMap.find({}).sort({ stateName: 1 });
 
     res.json({
