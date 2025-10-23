@@ -1445,6 +1445,29 @@ app.patch('/api/admin/pincodes/:pincode', authenticateToken, adminAuth, async (r
   }
 });
 
+// Admin route for bulk updating pincodes by state/district
+app.patch('/api/admin/delivery-areas/bulk-update', authenticateToken, adminAuth, async (req, res) => {
+  try {
+    const { stateName, districtName, deliverable } = req.body;
+
+    if (!stateName || typeof deliverable !== 'boolean') {
+      return res.status(400).json({ error: 'State name and deliverable status are required.' });
+    }
+
+    const filter = { stateName };
+    if (districtName) {
+      filter.districtName = districtName;
+    }
+
+    const result = await Pincode.updateMany(filter, { $set: { deliverable } });
+
+    res.json({ message: `Successfully updated ${result.modifiedCount} pincodes.`, result });
+  } catch (error) {
+    console.error('Bulk pincode update error:', error);
+    res.status(500).json({ error: 'Failed to perform bulk update on pincodes.' });
+  }
+});
+
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error(error);
