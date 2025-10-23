@@ -186,6 +186,21 @@ const Counter = mongoose.model('Counter', counterSchema);
 
 const Order = mongoose.model('Order', orderSchema);
 
+// Pincode Schema for Delivery Areas
+const pincodeSchema = new mongoose.Schema({
+  officeName: { type: String, required: true },
+  pincode: { type: Number, required: true, index: true },
+  officeType: String,
+  deliveryStatus: String,
+  districtName: { type: String, required: true, index: true },
+  stateName: { type: String, required: true, index: true },
+  deliverable: { type: Boolean, default: false, index: true }
+});
+
+pincodeSchema.index({ pincode: 1, officeName: 1 }, { unique: true });
+
+const Pincode = mongoose.model('Pincode', pincodeSchema);
+
 // JWT Authentication middleware
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -1378,6 +1393,51 @@ app.post('/api/create-admin', csrfProtection, async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to create admin account' });
+  }
+});
+
+// --- Delivery Area Routes ---
+
+// Public route to check if a pincode is deliverable
+app.get('/api/check-pincode/:pincode', async (req, res) => {
+  try {
+    const { pincode } = req.params;
+    if (!/^\d{6}$/.test(pincode)) {
+      return res.status(400).json({ deliverable: false, message: 'Invalid pincode format.' });
+    }
+
+    const area = await Pincode.findOne({ pincode: parseInt(pincode, 10), deliverable: true });
+
+    if (area) {
+      res.json({ deliverable: true, message: `Delivery available to ${area.officeName}, ${area.districtName}.` });
+    } else {
+      res.status(404).json({ deliverable: false, message: 'Sorry, we do not deliver to this pincode yet.' });
+    }
+  } catch (error) {
+    console.error('Pincode check error:', error);
+    res.status(500).json({ deliverable: false, message: 'Error checking pincode availability.' });
+  }
+});
+
+// Admin route to get all delivery areas for management
+app.get('/api/admin/delivery-areas', authenticateToken, adminAuth, async (req, res) => {
+  try {
+    // Fetch all pincodes. For performance on very large datasets, you might add pagination here later.
+    const pincodes = await Pincode.find({}).sort({ stateName: 1, districtName: 1, pincode: 1 });
+    res.json({ pincodes });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch delivery areas.' });
+  }
+});
+
+// Admin route to update a pincode's deliverable status
+app.patch('/api/admin/pincodes/:pincode', authenticateToken, adminAuth, async (req, res) => {
+  try {
+    const { deliverable } = req.body;
+    await Pincode.updateMany({ pincode: req.params.pincode }, { $set: { deliverable } });
+    res.json({ message: `Pincode ${req.params.pincode} status updated.` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update pincode status.' });
   }
 });
 
