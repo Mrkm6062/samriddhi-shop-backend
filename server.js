@@ -1426,11 +1426,45 @@ app.get('/api/check-pincode/:pincode', async (req, res) => {
 // Admin route to get all delivery areas for management
 app.get('/api/admin/delivery-areas', authenticateToken, adminAuth, async (req, res) => {
   try {
-    // Fetch all pincodes. For performance on very large datasets, you might add pagination here later.
-    const pincodes = await Pincode.find({}).sort({ stateName: 1, districtName: 1, pincode: 1 });
-    res.json({ pincodes });
+    // Use aggregation to get a structured list of states and their districts.
+    const stateDistrictMap = await Pincode.aggregate([
+      { $group: { _id: { state: "$stateName", district: "$districtName" } } },
+      { $group: { _id: "$_id.state", districts: { $addToSet: "$_id.district" } } },
+      { $project: { _id: 0, stateName: "$_id", districts: { $sortArray: { input: "$districts", sortBy: 1 } } } },
+      { $sort: { stateName: 1 } }
+    ]);
+
+    res.json({
+      // The frontend will now receive a structured map instead of flat lists.
+      // Example: [{ stateName: "Maharashtra", districts: ["Mumbai", "Pune"] }]
+      stateDistrictMap: stateDistrictMap,
+      pincodes: [] // Pincodes will be fetched on demand
+    });
+
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch delivery areas.' });
+  }
+});
+
+// NEW: Admin route to fetch pincodes based on filters
+app.get('/api/admin/pincodes/search', authenticateToken, adminAuth, async (req, res) => {
+  try {
+    const { state, district, pincode } = req.query;
+    const query = {};
+
+    if (state) query.stateName = state;
+    if (district) query.districtName = district;
+    if (pincode) query.pincode = { $regex: `^${pincode}` };
+
+    // Only execute query if at least one filter is provided
+    if (Object.keys(query).length === 0) {
+      return res.json([]);
+    }
+
+    const pincodes = await Pincode.find(query).limit(500).sort({ pincode: 1 }); // Limit to 500 results for performance
+    res.json(pincodes);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to search for pincodes.' });
   }
 });
 
