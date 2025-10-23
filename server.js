@@ -442,6 +442,12 @@ app.post('/api/send-verification-otp', async (req, res) => {
     return res.status(400).json({ error: 'A user with this phone number already exists.' });
   }
 
+  // Check for Twilio configuration before attempting to send
+  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+    console.error('FATAL: Twilio service is not configured. Please set TWILIO environment variables.');
+    return res.status(500).json({ error: 'SMS service is not configured on the server.' });
+  }
+
   const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
 
   try {
