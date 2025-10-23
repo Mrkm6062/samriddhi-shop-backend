@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { z } from 'zod';
 import nodemailer from 'nodemailer';
+import twilio from 'twilio';
 
 dotenv.config();
 
@@ -60,6 +61,9 @@ const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
+
+// Twilio Client
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -194,6 +198,14 @@ const counterSchema = new mongoose.Schema({
 const Counter = mongoose.model('Counter', counterSchema);
 
 const Order = mongoose.model('Order', orderSchema);
+
+// OTP Schema for phone verification
+const otpSchema = new mongoose.Schema({
+  phone: { type: String, required: true },
+  otp: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now, index: { expires: '10m' } } // OTP expires in 10 minutes
+});
+const Otp = mongoose.model('Otp', otpSchema);
 
 // Pincode Schema for Delivery Areas
 const pincodeSchema = new mongoose.Schema({
@@ -340,11 +352,17 @@ app.post('/api/register',
   validate(registerSchema),
   async (req, res) => {
     try {
-      const { name, email, password, phone } = req.body;
+      const { name, email, password, phone, otp } = req.body;
 
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         return res.status(400).json({ error: 'User already exists' });
+      }
+
+      // Verify OTP
+      const otpRecord = await Otp.findOne({ phone, otp });
+      if (!otpRecord) {
+        return res.status(400).json({ error: 'Invalid or expired OTP.' });
       }
 
       const user = new User({ name, email, password, phone });
@@ -355,6 +373,9 @@ app.post('/api/register',
         process.env.JWT_SECRET || 'fallback_secret_key',
         { expiresIn: '7d' }
       );
+
+      // Clean up the used OTP
+      await Otp.deleteOne({ _id: otpRecord._id });
 
       res.status(201).json({
         message: 'User created successfully',
@@ -407,6 +428,42 @@ app.post('/api/login', validate(loginSchema),
     }
   }
 );
+
+// --- Phone Verification Route ---
+app.post('/api/send-verification-otp', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone || !/^\+?[1-9]\d{1,14}$/.test(phone)) {
+    return res.status(400).json({ error: 'Invalid phone number format.' });
+  }
+
+  // Check if user with this phone number already exists
+  const existingUser = await User.findOne({ phone });
+  if (existingUser) {
+    return res.status(400).json({ error: 'A user with this phone number already exists.' });
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+
+  try {
+    // Store OTP in the database
+    await Otp.create({ phone, otp });
+
+    // Send OTP via Twilio
+    await twilioClient.messages.create({
+      body: `Your SamriddhiShop verification code is: ${otp}`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to: phone
+    });
+
+    res.json({ message: 'Verification code sent successfully.' });
+
+  } catch (error) {
+    console.error('Twilio OTP Error:', error);
+    // Provide a more specific error message if possible
+    const errorMessage = error.code === 21211 ? `The phone number ${phone} is not a valid number.` : 'Failed to send verification code.';
+    res.status(500).json({ error: errorMessage, details: error.message });
+  }
+});
 
 // Add item to cart (for logged-in users)
 app.post('/api/cart/add', authenticateToken, csrfProtection, async (req, res) => {
