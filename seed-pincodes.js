@@ -23,7 +23,7 @@ const pincodeSchema = new mongoose.Schema({
 });
 
 // Create a unique compound index to prevent duplicate entries
-pincodeSchema.index({ pincode: 1, officeName: 1 }, { unique: true });
+pincodeSchema.index({ officeName: 1 }, { unique: true });
 
 const Pincode = mongoose.model('Pincode', pincodeSchema);
 
@@ -58,18 +58,25 @@ const fetchAndSeedPincodes = async () => {
       const records = data.records;
 
       if (records && records.length > 0) {
-        const pincodesToInsert = records.map(record => ({
-          officeName: record.officename,
-          pincode: parseInt(record.pincode, 10),
-          officeType: record.officetype,
-          deliveryStatus: record.deliverystatus,
-          districtName: record.districtname,
-          stateName: record.statename,
-          deliverable: false // You can set your default here
+        const bulkOps = records.map(record => ({
+          updateOne: {
+            filter: { officeName: record.officename },
+            update: {
+              $set: {
+                pincode: parseInt(record.pincode, 10),
+                officeType: record.officetype,
+                deliveryStatus: record.deliverystatus,
+                districtName: record.districtname,
+                stateName: record.statename,
+              },
+              // On initial insert, set the deliverable status
+              $setOnInsert: { deliverable: false }
+            },
+            upsert: true // Insert if it doesn't exist, update if it does
+          }
         }));
 
-        // Using ordered: false allows the operation to continue even if there are duplicate key errors
-        await Pincode.insertMany(pincodesToInsert, { ordered: false });
+        await Pincode.bulkWrite(bulkOps);
         
         totalRecords += records.length;
         console.log(`Inserted/updated ${records.length} records. Total so far: ${totalRecords}`);
