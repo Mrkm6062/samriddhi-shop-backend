@@ -1047,6 +1047,32 @@ app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddres
   }
 );
 
+// Update address
+app.put('/api/addresses/:id', authenticateToken, csrfProtection, validate(addAddressSchema),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updatedAddressData = req.body;
+
+      const user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const addressToUpdate = user.addresses.id(id);
+      if (!addressToUpdate) {
+        return res.status(404).json({ error: 'Address not found' });
+      }
+
+      addressToUpdate.set(updatedAddressData);
+      await user.save();
+
+      res.json({ message: 'Address updated successfully', address: addressToUpdate });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to update address' });
+    }
+  }
+);
 // Delete address
 app.delete('/api/addresses/:id', authenticateToken, csrfProtection, async (req, res) => {
   try {
