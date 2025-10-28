@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { z } from 'zod';
+import webpush from 'web-push';
 import nodemailer from 'nodemailer';
 
 dotenv.config();
@@ -61,6 +62,13 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+// VAPID keys for web-push
+webpush.setVapidDetails(
+  'mailto:support@samriddhishop.com',
+  process.env.VAPID_PUBLIC_KEY,
+  process.env.VAPID_PRIVATE_KEY
+);
+
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // User Schema
@@ -74,7 +82,14 @@ const userSchema = new mongoose.Schema({
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     quantity: { type: Number, default: 1 }
   }],
-  addresses: [{
+  pushSubscriptions: [{
+    endpoint: String,
+    keys: {
+      p256dh: String,
+      auth: String
+    }
+  }],
+    addresses: [{
     street: { type: String, required: true },
     city: { type: String, required: true },
     state: { type: String },
@@ -194,6 +209,16 @@ const counterSchema = new mongoose.Schema({
 const Counter = mongoose.model('Counter', counterSchema);
 
 const Order = mongoose.model('Order', orderSchema);
+
+// Notification Schema
+const notificationSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  message: { type: String, required: true },
+  link: { type: String }, // e.g., /track/orderId
+  read: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now }
+});
+const Notification = mongoose.model('Notification', notificationSchema);
 
 // Pincode Schema for Delivery Areas
 const pincodeSchema = new mongoose.Schema({
@@ -1590,6 +1615,66 @@ app.patch('/api/admin/delivery-areas/bulk-update', authenticateToken, adminAuth,
     console.error('Bulk pincode update error:', error);
     res.status(500).json({ error: 'Failed to perform bulk update on pincodes.' });
   }
+});
+
+// --- Push Notification Subscription ---
+app.post('/api/subscribe', authenticateToken, async (req, res) => {
+  const subscription = req.body;
+  try {
+    // Check if subscription already exists to avoid duplicates
+    const user = await User.findById(req.user._id);
+    const exists = user.pushSubscriptions.some(sub => sub.endpoint === subscription.endpoint);
+
+    if (!exists) {
+      await User.updateOne(
+        { _id: req.user._id },
+        { $push: { pushSubscriptions: subscription } }
+      );
+    }
+    res.status(201).json({ message: 'Subscription saved.' });
+  } catch (error) {
+    console.error('Error saving subscription:', error);
+    res.status(500).json({ error: 'Failed to save subscription.' });
+  }
+});
+
+app.get('/api/vapidPublicKey', (req, res) => {
+  res.send(process.env.VAPID_PUBLIC_KEY);
+});
+// --- Notification Routes ---
+
+// Get user notifications
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(20); // Limit to recent 20
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch notifications' });
+  }
+});
+
+// Mark a single notification as read
+app.patch('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+  try {
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      { read: true },
+      { new: true }
+    );
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+    res.json({ message: 'Notification marked as read' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update notification' });
+  }
+});
+
+// Mark all notifications as read
+app.patch('/api/notifications/read-all', authenticateToken, async (req, res) => {
+  // This endpoint is ready for when you want to add a "Mark all as read" button.
 });
 
 // Error handling middleware
