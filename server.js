@@ -90,6 +90,10 @@ const userSchema = new mongoose.Schema({
     }
   }],
     addresses: [{
+    name: { type: String, required: true },
+    mobileNumber: { type: String, required: true },
+    alternateMobileNumber: { type: String },
+    addressType: { type: String, enum: ['home', 'work'], default: 'home' },
     street: { type: String, required: true },
     city: { type: String, required: true },
     state: { type: String },
@@ -168,6 +172,9 @@ const orderSchema = new mongoose.Schema({
   total: { type: Number, required: true },
   status: { type: String, default: 'pending', enum: ['pending', 'processing', 'shipped', 'delivered'] },
   shippingAddress: {
+    name: String,
+    mobileNumber: String,
+    alternateMobileNumber: String,
     street: String,
     city: String,
     state: String,
@@ -1013,8 +1020,13 @@ app.put('/api/change-password', authenticateToken, csrfProtection, validate(chan
 // Zod schema for adding an address
 const addAddressSchema = z.object({
   body: z.object({
-    street: z.string().trim().min(1, { message: 'Street is required' }),
-    city: z.string().trim().min(1, { message: 'City is required' })
+    name: z.string().trim().min(1, { message: 'Name is required' }),
+    mobileNumber: z.string().trim().min(10, { message: 'Mobile number must be at least 10 digits' }),
+    alternateMobileNumber: z.string().trim().optional(),
+    addressType: z.enum(['home', 'work']),
+    street: z.string().trim().min(1, { message: 'Street/House No. is required' }),
+    city: z.string().trim().min(1, { message: 'City/Town is required' }),
+    zipCode: z.string().trim().min(6, { message: 'A 6-digit Pincode is required' })
   })
 });
 
@@ -1022,10 +1034,10 @@ const addAddressSchema = z.object({
 app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddressSchema),
   async (req, res) => {
     try {
-      const { street, city, state, zipCode, country } = req.body;
+      const { name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country } = req.body;
       
       const user = await User.findById(req.user._id);
-      user.addresses.push({ street, city, state, zipCode, country: country || 'India' });
+      user.addresses.push({ name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country: country || 'India' });
       await user.save();
 
       res.json({ message: 'Address added successfully' });
