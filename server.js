@@ -790,6 +790,38 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
 
       await order.save();
 
+      // Create a notification for the user and send a push notification
+      if (order.userId) {
+        const notificationMessage = `Your order #${order.orderNumber || order._id.slice(-8)} has been updated to: ${status}.`;
+        const notification = new Notification({
+            userId: order.userId,
+            message: notificationMessage,
+            link: `/track/${order._id}`
+        });
+        await notification.save();
+
+        // Send push notification
+        const user = await User.findById(order.userId);
+        if (user && user.pushSubscriptions.length > 0) {
+          const payload = JSON.stringify({
+            title: 'Order Status Update',
+            body: notificationMessage,
+            url: `${FRONTEND_URL}/track/${order._id}`
+          });
+
+          user.pushSubscriptions.forEach(sub => {
+            webpush.sendNotification(sub, payload).catch(async (error) => {
+              if (error.statusCode === 410) { // Gone, subscription is no longer valid
+                await User.updateOne(
+                  { _id: user._id },
+                  { $pull: { pushSubscriptions: { endpoint: sub.endpoint } } }
+                );
+              }
+            });
+          });
+        }
+      }
+
       res.json({ message: 'Order status updated', order });
     } catch (error) {
       res.status(500).json({ error: 'Failed to update order status' });
