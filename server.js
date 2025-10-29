@@ -23,7 +23,8 @@ app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet({
-  // Configure a strong Content Security Policy (CSP)
+  // Explicitly set the CSP. Setting it to false disables helmet's default,
+  // allowing our custom policy below to be the single source of truth.
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
