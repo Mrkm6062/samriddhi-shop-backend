@@ -754,13 +754,14 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
       }
 
       // Add to status history
-      order.statusHistory.push({
-        status: order.status,
-        updatedAt: new Date(),
-        updatedBy: req.user.email,
-        notes: notes || `Status changed to ${status}`
-      });
-
+      if (order.status !== status) { // Only add to history if status has changed
+        order.statusHistory.push({
+          status: status, // Use the NEW status
+          updatedAt: new Date(),
+          updatedBy: req.user.email,
+          notes: notes || `Status changed from ${order.status} to ${status}`
+        });
+      }
       order.status = status;
 
       // If a COD order is marked as delivered, automatically mark payment as received
