@@ -1453,7 +1453,7 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
 app.post('/api/cart', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const { cart: cartData } = req.body;
-    if (!Array.isArray(cart)) {
+    if (!Array.isArray(cartData)) {
       return res.status(400).json({ error: 'Cart data must be an array.' });
     }
     const newCart = cartData.map(item => ({
