@@ -71,17 +71,19 @@ webpush.setVapidDetails(
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-// User Schema
+// Schemas
+const cartItemSchema = new mongoose.Schema({
+  productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+  quantity: { type: Number, required: true, min: 1, default: 1 }
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true, minlength: 6 },
   phone: { type: String, trim: true },
   wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
-  cart: [{
-    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
-    quantity: { type: Number, default: 1 }
-  }],
+  cart: { type: [cartItemSchema], default: [] },
   pushSubscriptions: [{
     endpoint: String,
     keys: {
@@ -90,8 +92,8 @@ const userSchema = new mongoose.Schema({
     }
   }],
     addresses: [{
-    name: { type: String, required: true },
-    mobileNumber: { type: String, required: true },
+    name: { type: String },
+    mobileNumber: { type: String },
     alternateMobileNumber: { type: String },
     addressType: { type: String, enum: ['home', 'work'], default: 'home' },
     street: { type: String, required: true },
@@ -1076,13 +1078,15 @@ app.put('/api/addresses/:id', authenticateToken, csrfProtection, validate(addAdd
 // Delete address
 app.delete('/api/addresses/:id', authenticateToken, csrfProtection, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    user.addresses = user.addresses.filter(addr => addr._id.toString() !== req.params.id);
-    await user.save();
+    await User.findByIdAndUpdate(
+      req.user._id,
+      { $pull: { addresses: { _id: req.params.id } } }
+    );
 
     res.json({ message: 'Address deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to delete address' });
+    console.error('Delete address error:', error);
+    res.status(500).json({ error: 'Failed to delete address', details: error.message });
   }
 });
 
@@ -1448,15 +1452,21 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
 // Update user's cart
 app.post('/api/cart', authenticateToken, csrfProtection, async (req, res) => {
   try {
-    const { cart } = req.body;
-    const user = await User.findById(req.user._id);
-    user.cart = cart.map(item => ({
-      productId: item._id,
+    const { cart: cartData } = req.body;
+    if (!Array.isArray(cart)) {
+      return res.status(400).json({ error: 'Cart data must be an array.' });
+    }
+    const newCart = cartData.map(item => ({
+      productId: item.productId || item._id,
       quantity: item.quantity
     }));
-    await user.save();
+
+    await User.findByIdAndUpdate(req.user._id, {
+      $set: { cart: newCart }
+    });
     res.json({ message: 'Cart updated' });
   } catch (error) {
+    console.error('Cart update error:', error); // Log the full error on the server
     res.status(500).json({ error: 'Failed to update cart' });
   }
 });
