@@ -206,7 +206,8 @@ const orderSchema = new mongoose.Schema({
   discount: { type: Number, default: 0 },
   shippingCost: { type: Number, default: 0 },
   tax: { type: Number, default: 0 },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  refundDetailsSubmitted: { type: Boolean, default: false } // New field
 });
 
 // Counter Schema for order numbers
@@ -333,6 +334,66 @@ const adminAuth = (req, res, next) => {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
+};
+
+// --- Email Helper Function ---
+const sendOrderStatusEmail = async (userEmail, userName, order) => {
+  if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.error('Email service is not configured. Skipping order status email.');
+    return;
+  }
+
+  let subject = '';
+  let htmlBody = '';
+  const orderLink = `${FRONTEND_URL}/track/${order._id}`;
+  const status = order.status;
+
+  switch (status) {
+    case 'pending':
+      const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+      subject = `✅ Order Confirmed: Your SamriddhiShop Order #${orderIdentifier} has been placed!`;
+      htmlBody = `<h1>Thank you for your order!</h1><p>Hi ${userName},</p><p>Your order #${orderIdentifier} has been successfully placed. We'll notify you again once it's shipped.</p><p>Total Amount: ₹${order.total.toFixed(2)}</p><p>You can view your order details here: <a href="${orderLink}">Track Order</a></p><p>Thanks for shopping with us!</p><p><strong>SamriddhiShop Team</strong></p>`;
+      break;
+    case 'shipped':
+      subject = `🚚 Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} has been shipped!`;
+      htmlBody = `<h1>Your order is on its way!</h1><p>Hi ${userName},</p><p>Great news! Your order #${order.orderNumber} has been shipped.</p>${order.courierDetails.courierName ? `<p><strong>Courier:</strong> ${order.courierDetails.courierName}</p>` : ''}${order.courierDetails.trackingNumber ? `<p><strong>Tracking Number:</strong> ${order.courierDetails.trackingNumber}</p>` : ''}<p>You can track your order here: <a href="${orderLink}">Track Order</a></p><p>Thanks for shopping with us!</p><p><strong>SamriddhiShop Team</strong></p>`;
+      break;
+    case 'delivered':
+      subject = `📦 Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} has been delivered!`;
+      htmlBody = `<h1>Your order has been delivered!</h1><p>Hi ${userName},</p><p>Your order #${order.orderNumber} has been successfully delivered. We hope you enjoy your products!</p><p>We'd love to hear your feedback. You can rate your products from your order page.</p><p>You can view your order details here: <a href="${orderLink}">View Order</a></p><p>Thanks for shopping with us!</p><p><strong>SamriddhiShop Team</strong></p>`;
+      break;
+    case 'cancelled':
+      subject = `❌ Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} has been cancelled.`;
+      htmlBody = `<h1>Order Cancelled</h1><p>Hi ${userName},</p><p>Your order #${order.orderNumber} has been cancelled as requested. If you have any questions, please contact our support team.</p><p>If you paid online, your refund will be processed shortly.</p><p>You can view your order details here: <a href="${orderLink}">View Order</a></p><p><strong>SamriddhiShop Team</strong></p>`;
+      break;
+    default:
+      // For other statuses like 'processing', 'refunded', etc.
+      subject = `🔔 Order Update: Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} is now ${status}.`;
+      htmlBody = `<h1>Order Status Update</h1><p>Hi ${userName},</p><p>The status of your order #${order.orderNumber} has been updated to: <strong>${status}</strong>.</p><p>You can view your order details here: <a href="${orderLink}">Track Order</a></p><p><strong>SamriddhiShop Team</strong></p>`;
+      break;
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST,
+      port: process.env.EMAIL_PORT,
+      secure: false,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+
+    await transporter.sendMail({
+      from: `"SamriddhiShop" <${process.env.EMAIL_USER}>`,
+      to: userEmail,
+      subject: subject,
+      html: htmlBody,
+    });
+    console.log(`Order status email sent to ${userEmail} for status: ${status}`);
+  } catch (error) {
+    console.error(`Failed to send order status email to ${userEmail}:`, error);
+  }
 };
 
 // API Routes
@@ -840,6 +901,65 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
   }
 );
 
+// User-initiated order cancellation
+app.patch('/api/orders/:id/cancel', authenticateToken, csrfProtection, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Ensure the user owns the order
+    if (order.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Access denied. You can only cancel your own orders.' });
+    }
+
+    // Check if the order is in a cancellable state
+    if (order.status !== 'pending' && order.status !== 'processing') {
+      return res.status(400).json({ error: `Order cannot be cancelled. Current status: ${order.status}` });
+    }
+
+    const previousStatus = order.status;
+    order.status = 'cancelled';
+
+    // Add a record to the status history
+    order.statusHistory.push({
+      status: 'cancelled',
+      updatedAt: new Date(),
+      updatedBy: req.user.email, // Identify that the customer initiated this action
+      notes: `Order cancelled by customer. Previous status was ${previousStatus}.`
+    });
+
+    await order.save();
+    res.json({ message: 'Your order has been successfully cancelled.', order });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cancel order.' });
+  }
+});
+
+// Endpoint to mark that refund details have been submitted
+app.patch('/api/orders/:id/refund-details-submitted', authenticateToken, csrfProtection, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    // Ensure the user owns the order
+    if (order.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Access denied.' });
+    }
+
+    order.refundDetailsSubmitted = true;
+    await order.save();
+
+    res.json({ message: 'Refund details status updated.', order });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update order.' });
+  }
+});
 // Get orders by date range for admin
 app.get('/api/admin/orders/date-range', authenticateToken, adminAuth, async (req, res) => {
   try {
