@@ -22,7 +22,41 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  // Configure a strong Content Security Policy (CSP)
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://checkout.razorpay.com", "https://connect.facebook.net"],
+      styleSrc: ["'self'", "'unsafe-inline'"], // 'unsafe-inline' is often needed for CSS-in-JS
+      imgSrc: ["'self'", "data:", "https:", "https://storage.googleapis.com"],
+      connectSrc: [
+        "'self'",
+        process.env.FRONTEND_URL,
+        "https://samriddhishop.in",
+        "https://samriddhishop-backend.onrender.com",
+        "https://lumberjack-cx.razorpay.com",
+        "https://www.facebook.com"
+      ],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameSrc: ["'self'", "https://api.razorpay.com"], // Allow Razorpay's iframe
+      frameAncestors: ["'self'"], // Mitigates clickjacking
+      // Mitigate DOM-based XSS with Trusted Types
+      requireTrustedTypesFor: ["'script'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  // Set a strong HSTS policy: 2 years, include subdomains, preload
+  strictTransportSecurity: {
+    maxAge: 63072000,
+    includeSubDomains: true,
+    preload: true,
+  },
+  // Isolate the origin
+  crossOriginOpenerPolicy: { policy: "same-origin" },
+}));
+
 app.use(cors({
   origin: [
     'http://localhost:3000',
