@@ -225,7 +225,8 @@ const notificationSchema = new mongoose.Schema({
   message: { type: String, required: true },
   link: { type: String }, // e.g., /track/orderId
   read: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now }
+  createdAt: { type: Date, default: Date.now },
+  deleted: { type: Boolean, default: false, index: true } // Add this line for soft deletes
 });
 const Notification = mongoose.model('Notification', notificationSchema);
 
@@ -1726,7 +1727,7 @@ app.get('/api/vapidPublicKey', (req, res) => {
 // Get user notifications
 app.get('/api/notifications', authenticateToken, async (req, res) => {
   try {
-    const notifications = await Notification.find({ userId: req.user._id })
+    const notifications = await Notification.find({ userId: req.user._id, deleted: { $ne: true } })
       .sort({ createdAt: -1 })
       .limit(20); // Limit to recent 20
     res.json(notifications);
@@ -1759,6 +1760,23 @@ app.patch('/api/notifications/read-all', authenticateToken, csrfProtection, asyn
     res.json({ message: 'All notifications marked as read' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to mark all notifications as read' });
+  }
+});
+
+// Soft-delete all notifications for a user
+app.delete('/api/notifications/clear-all', authenticateToken, csrfProtection, async (req, res) => {
+  try {
+    // To handle potential data inconsistencies where userId might be stored as a string,
+    // we query for both ObjectId and its string representation.
+    const userIdToUpdate = req.user._id;
+    const result = await Notification.updateMany(
+      { userId: { $in: [userIdToUpdate, userIdToUpdate.toString()] } },
+      { $set: { deleted: true } }
+    );
+    res.json({ message: 'All notifications cleared successfully', modifiedCount: result.modifiedCount });
+  } catch (error) {
+    console.error('Error clearing notifications:', error);
+    res.status(500).json({ error: 'Failed to clear notifications' });
   }
 });
 
