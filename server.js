@@ -172,7 +172,7 @@ const orderSchema = new mongoose.Schema({
     }
   }],
   total: { type: Number, required: true },
-  status: { type: String, default: 'pending', enum: ['pending', 'processing', 'shipped', 'delivered'] },
+  status: { type: String, default: 'pending', enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'] },
   shippingAddress: {
     name: String,
     mobileNumber: String,
@@ -732,7 +732,7 @@ app.post('/api/create-admin', async (req, res) => {
 // Zod schema for order status update
 const updateOrderStatusSchema = z.object({
   body: z.object({
-    status: z.enum(['pending', 'processing', 'shipped', 'delivered'])
+    status: z.enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'])
   })
 });
 
