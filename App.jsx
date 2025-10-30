@@ -526,14 +526,17 @@ function HomePage({ products, loading }) {
   return (
     <div>
       {/* Hero Banner */}
-      <div 
-        className="text-white p-12 rounded-lg mb-8 bg-gradient-to-r from-blue-500 to-purple-600 bg-cover bg-center relative"
-        style={{
-          backgroundImage: banner.backgroundImage ? `url(${banner.backgroundImage})` : undefined
-        }}
-      >
+      <div className="relative text-white p-12 rounded-lg mb-8 bg-gradient-to-r from-blue-500 to-purple-600 overflow-hidden">
         {banner.backgroundImage && (
-          <div className="absolute inset-0 bg-black bg-opacity-40 rounded-lg"></div>
+          <>
+            <img
+              src={banner.backgroundImage}
+              alt={banner.title || 'Promotional banner'}
+              className="absolute inset-0 w-full h-full object-cover"
+              fetchpriority="high"
+            />
+            <div className="absolute inset-0 bg-black bg-opacity-40"></div>
+          </>
         )}
         <div className="relative z-10">
           <h1 className="text-4xl font-bold mb-4">{banner.title}</h1>

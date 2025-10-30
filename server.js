@@ -23,8 +23,7 @@ app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet({
-  // Explicitly set the CSP. Setting it to false disables helmet's default,
-  // allowing our custom policy below to be the single source of truth.
+  // 1. Configure a strong Content Security Policy (CSP)
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -43,18 +42,17 @@ app.use(helmet({
       objectSrc: ["'none'"],
       frameSrc: ["'self'", "https://api.razorpay.com"], // Allow Razorpay's iframe
       frameAncestors: ["'self'"], // Mitigates clickjacking
-      // Mitigate DOM-based XSS with Trusted Types
-      requireTrustedTypesFor: ["'script'"],
+      requireTrustedTypesFor: ["'script'"], // Mitigate DOM-based XSS with Trusted Types
       upgradeInsecureRequests: [],
     },
   },
-  // Set a strong HSTS policy: 2 years, include subdomains, preload
+  // 2. Set a strong HSTS policy: 2 years, include subdomains, preload
   strictTransportSecurity: {
     maxAge: 63072000,
     includeSubDomains: true,
     preload: true,
   },
-  // Isolate the origin
+  // 3. Isolate the origin
   crossOriginOpenerPolicy: { policy: "same-origin" },
 }));
 
