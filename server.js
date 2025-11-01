@@ -56,15 +56,19 @@ app.use(helmet({
   crossOriginOpenerPolicy: { policy: "same-origin" },
 }));
 
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://samriddhishop.netlify.app',
-    process.env.FRONTEND_URL,
-    'https://samriddhishop.in'
-  ].filter(Boolean),
-  credentials: true
-}));
+const whitelist = [
+  'http://localhost:3000',
+  'https://samriddhishop.netlify.app',
+  process.env.FRONTEND_URL,
+  'https://samriddhishop.in',
+  'https://samriddhishopproduction.netlify.app',
+];
+
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'development' ? '*' : whitelist.filter(Boolean),
+  credentials: true,
+};
+app.use(cors(corsOptions));
 
 // Rate limiting (relaxed for better user experience)
 const limiter = rateLimit({
@@ -1038,19 +1042,25 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     sevenDaysAgo.setHours(0, 0, 0, 0);
 
-    const [dailyStats, weeklySales, totalRevenueResult, statusCounts] = await Promise.all([
+    const [dailyStats, weeklySales, totalRevenueResult, statusCounts, totalCancelledResult, totalRefundedResult] = await Promise.all([
       Order.aggregate([
         { $match: { createdAt: { $gte: startOfDay, $lte: endOfDay } } },
         {
           $group: {
-            _id: "$paymentMethod",
+            _id: {
+              paymentMethod: "$paymentMethod",
+              status: "$status"
+            },
             count: { $sum: 1 },
             totalAmount: { $sum: "$total" }
           }
         }
       ]),
       Order.aggregate([
-        { $match: { createdAt: { $gte: sevenDaysAgo } } },
+        { $match: { 
+            createdAt: { $gte: sevenDaysAgo },
+            status: { $nin: ['cancelled', 'refunded'] } 
+        } },
         { $group: {
             _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
             totalSales: { $sum: "$total" }
@@ -1058,11 +1068,22 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
         { $sort: { _id: 1 } }
       ]),
       Order.aggregate([
-        { $group: { _id: null, total: { $sum: '$total' } } }
+        { $match: { status: { $nin: ['cancelled', 'refunded'] } } },
+        { $group: { 
+            _id: null, total: { $sum: '$total' } 
+        } }
       ]),
       Order.aggregate([
         { $group: { _id: '$status', count: { $sum: 1 } } }
-      ])
+      ]),
+      Order.aggregate([
+        { $match: { status: 'cancelled' } },
+        { $group: { _id: null, total: { $sum: '$total' } } }
+      ]),
+      Order.aggregate([
+        { $match: { status: 'refunded' } },
+        { $group: { _id: null, total: { $sum: '$total' } } }
+      ]),
     ]);
 
     const todayAnalytics = {
@@ -1072,25 +1093,41 @@ app.get('/api/admin/analytics', authenticateToken, adminAuth, async (req, res) =
       codRevenue: 0,
       prepaidOrders: 0,
       prepaidRevenue: 0,
+      cancelledRevenue: 0,
+      refundedRevenue: 0,
     };
 
+    // Process all daily stats from the single aggregation
     dailyStats.forEach(group => {
-      todayAnalytics.totalOrders += group.count;
-      todayAnalytics.totalRevenue += group.totalAmount;
-      if (group._id === 'cod') {
-        todayAnalytics.codOrders = group.count;
-        todayAnalytics.codRevenue = group.totalAmount;
+      const status = group._id.status;
+      const paymentMethod = group._id.paymentMethod;
+
+      if (status === 'cancelled') {
+        todayAnalytics.cancelledRevenue += group.totalAmount;
+      } else if (status === 'refunded') {
+        todayAnalytics.refundedRevenue += group.totalAmount;
       } else {
-        todayAnalytics.prepaidOrders += group.count;
-        todayAnalytics.prepaidRevenue += group.totalAmount;
+        // Only count non-cancelled/refunded orders towards total revenue and orders
+        todayAnalytics.totalOrders += group.count;
+        todayAnalytics.totalRevenue += group.totalAmount;
+
+        if (paymentMethod === 'cod') {
+          todayAnalytics.codOrders += group.count;
+          todayAnalytics.codRevenue += group.totalAmount;
+        } else { // Assumes 'razorpay' or other prepaid methods
+          todayAnalytics.prepaidOrders += group.count;
+          todayAnalytics.prepaidRevenue += group.totalAmount;
+        }
       }
     });
-    
+
     res.json({
       today: todayAnalytics,
       statusCounts,
       totalRevenue: totalRevenueResult[0]?.total || 0,
-      weeklySales: weeklySales || []
+      weeklySales: weeklySales || [],
+      totalCancelled: totalCancelledResult[0]?.total || 0,
+      totalRefunded: totalRefundedResult[0]?.total || 0,
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch analytics' });
