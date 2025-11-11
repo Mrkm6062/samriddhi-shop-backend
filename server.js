@@ -373,7 +373,6 @@ const adminAuth = (req, res, next) => {
   next();
 };
 
-// --- Email Helper Function ---
 const sendOrderStatusEmail = async (userEmail, userName, order) => {
   if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     console.error('Email service is not configured. Skipping order status email.');
@@ -389,24 +388,182 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
     case 'pending':
       const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
       subject = `✅ Order Confirmed: Your SamriddhiShop Order #${orderIdentifier} has been placed!`;
-      htmlBody = `<h1>Thank you for your order!</h1><p>Hi ${userName},</p><p>Your order #${orderIdentifier} has been successfully placed. We'll notify you again once it's shipped.</p><p>Total Amount: ₹${order.total.toFixed(2)}</p><p>You can view your order details here: <a href="${orderLink}">Track Order</a></p><p>Thanks for shopping with us!</p><p><strong>SamriddhiShop Team</strong></p>`;
+      const orderItemsHtml = order.items.map(item => `
+        <tr>
+          <td style="padding:10px; border-top:1px solid #ddd;">${item.name}</td>
+          <td align="center" style="padding:10px; border-top:1px solid #ddd;">${item.quantity}</td>
+          <td align="right" style="padding:10px; border-top:1px solid #ddd;">₹${(item.price * item.quantity).toFixed(2)}</td>
+        </tr>
+      `).join('');
+      htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr>
+              <td style="background-color:#4CAF50; padding:20px; text-align:center; color:#ffffff; font-size:24px;">
+                <strong>Order Confirmation</strong>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">Hi ${userName},</p>
+                <p style="font-size:16px; color:#555;">Thank you for shopping with us! We're happy to let you know that your order has been placed successfully.</p>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse; margin-top:20px;">
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold; width: 150px;">Order Number:</td><td>#${orderIdentifier}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Order Date:</td><td>${new Date(order.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Total Amount:</td><td>₹${order.total.toFixed(2)}</td></tr>
+                </table>
+                <h3 style="margin-top:30px; color:#333; border-bottom: 2px solid #eee; padding-bottom: 5px;">Order Details:</h3>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse;">
+                  <tr style="background-color:#f2f2f2;"><th align="left">Product</th><th align="center">Quantity</th><th align="right">Price</th></tr>
+                  ${orderItemsHtml}
+                </table>
+                <p style="font-size:16px; color:#555; margin-top:30px;">You can track your order status by clicking the button below:</p>
+                <p style="text-align:center; margin-top:20px;">
+                  <a href="${orderLink}" style="background-color:#4CAF50; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">Track My Order</a>
+                </p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">
+                © ${new Date().getFullYear()} SamriddhiShop. All rights reserved.
+              </td>
+            </tr>
+          </table>
+        </body>`;
       break;
     case 'shipped':
-      subject = `🚚 Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} has been shipped!`;
-      htmlBody = `<h1>Your order is on its way!</h1><p>Hi ${userName},</p><p>Great news! Your order #${order.orderNumber} has been shipped.</p>${order.courierDetails.courierName ? `<p><strong>Courier:</strong> ${order.courierDetails.courierName}</p>` : ''}${order.courierDetails.trackingNumber ? `<p><strong>Tracking Number:</strong> ${order.courierDetails.trackingNumber}</p>` : ''}<p>You can track your order here: <a href="${orderLink}">Track Order</a></p><p>Thanks for shopping with us!</p><p><strong>SamriddhiShop Team</strong></p>`;
+      const shippedOrderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+      subject = `🚚 Your SamriddhiShop Order #${shippedOrderIdentifier} has been shipped!`;
+      htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr>
+              <td style="background-color:#FFC107; padding:20px; text-align:center; color:#ffffff; font-size:24px;">
+                <strong>Order Shipped!</strong>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">Hi ${userName},</p>
+                <p style="font-size:16px; color:#555;">Great news! Your SamriddhiShop order #${shippedOrderIdentifier} has been shipped and is on its way to you.</p>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse; margin-top:20px;">
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold; width: 150px;">Order Number:</td><td>#${shippedOrderIdentifier}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Shipped Date:</td><td>${order.courierDetails?.shippedAt ? new Date(order.courierDetails.shippedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : 'N/A'}</td></tr>
+                  ${order.courierDetails?.courierName ? `<tr><td style="background-color:#f2f2f2; font-weight:bold;">Courier:</td><td>${order.courierDetails.courierName}</td></tr>` : ''}
+                  ${order.courierDetails?.trackingNumber ? `<tr><td style="background-color:#f2f2f2; font-weight:bold;">Tracking Number:</td><td>${order.courierDetails.trackingNumber}</td></tr>` : ''}
+                  ${order.courierDetails?.estimatedDelivery ? `<tr><td style="background-color:#f2f2f2; font-weight:bold;">Estimated Delivery:</td><td>${new Date(order.courierDetails.estimatedDelivery).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</td></tr>` : ''}
+                </table>
+                <p style="font-size:16px; color:#555; margin-top:30px;">You can track your order's journey by clicking the button below:</p>
+                <p style="text-align:center; margin-top:20px;">
+                  <a href="${orderLink}" style="background-color:#FFC107; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">Track My Order</a>
+                </p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">
+                © ${new Date().getFullYear()} SamriddhiShop. All rights reserved.
+              </td>
+            </tr>
+          </table>
+        </body>`;
       break;
     case 'delivered':
-      subject = `📦 Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} has been delivered!`;
-      htmlBody = `<h1>Your order has been delivered!</h1><p>Hi ${userName},</p><p>Your order #${order.orderNumber} has been successfully delivered. We hope you enjoy your products!</p><p>We'd love to hear your feedback. You can rate your products from your order page.</p><p>You can view your order details here: <a href="${orderLink}">View Order</a></p><p>Thanks for shopping with us!</p><p><strong>SamriddhiShop Team</strong></p>`;
+      const deliveredOrderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+      subject = `📦 Your SamriddhiShop Order #${deliveredOrderIdentifier} has been delivered!`;
+      htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr>
+              <td style="background-color:#28A745; padding:20px; text-align:center; color:#ffffff; font-size:24px;">
+                <strong>Order Delivered!</strong>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">Hi ${userName},</p>
+                <p style="font-size:16px; color:#555;">Great news! Your SamriddhiShop order #${deliveredOrderIdentifier} has been successfully delivered. We hope you enjoy your new products!</p>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse; margin-top:20px;">
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold; width: 150px;">Order Number:</td><td>#${deliveredOrderIdentifier}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Delivery Date:</td><td>${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Total Amount:</td><td>₹${order.total.toFixed(2)}</td></tr>
+                </table>
+                <p style="font-size:16px; color:#555; margin-top:30px;">We'd love to hear your feedback! You can view your order details and rate your products by clicking the button below:</p>
+                <p style="text-align:center; margin-top:20px;">
+                  <a href="${orderLink}" style="background-color:#28A745; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View My Order</a>
+                </p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">
+                © ${new Date().getFullYear()} SamriddhiShop. All rights reserved.
+              </td>
+            </tr>
+          </table>
+        </body>`;
       break;
     case 'cancelled':
-      subject = `❌ Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} has been cancelled.`;
-      htmlBody = `<h1>Order Cancelled</h1><p>Hi ${userName},</p><p>Your order #${order.orderNumber} has been cancelled as requested. If you have any questions, please contact our support team.</p><p>If you paid online, your refund will be processed shortly.</p><p>You can view your order details here: <a href="${orderLink}">View Order</a></p><p><strong>SamriddhiShop Team</strong></p>`;
+      const cancelledOrderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+      subject = `❌ Your SamriddhiShop Order #${cancelledOrderIdentifier} has been cancelled.`;
+      htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr>
+              <td style="background-color:#DC3545; padding:20px; text-align:center; color:#ffffff; font-size:24px;">
+                <strong>Order Cancelled</strong>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">Hi ${userName},</p>
+                <p style="font-size:16px; color:#555;">Your SamriddhiShop order #${cancelledOrderIdentifier} has been successfully cancelled.</p>
+                <p style="font-size:16px; color:#555;">If you paid for this order online, your refund will be processed and should reflect in your account within 5-7 business days. If you have any questions, please don't hesitate to contact our support team.</p>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse; margin-top:20px;">
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold; width: 150px;">Order Number:</td><td>#${cancelledOrderIdentifier}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Cancellation Date:</td><td>${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</td></tr>
+                </table>
+                <p style="text-align:center; margin-top:30px;">
+                  <a href="${orderLink}" style="background-color:#6c757d; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order Details</a>
+                </p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">We're sorry to see you go. We hope to see you again soon!</p>
+              </td>
+            </tr>
+            <tr><td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">© ${new Date().getFullYear()} SamriddhiShop. All rights reserved.</td></tr>
+          </table>
+        </body>`;
       break;
     default:
       // For other statuses like 'processing', 'refunded', etc.
-      subject = `🔔 Order Update: Your SamriddhiShop Order #${order.orderNumber || order._id.toString().slice(-8)} is now ${status}.`;
-      htmlBody = `<h1>Order Status Update</h1><p>Hi ${userName},</p><p>The status of your order #${order.orderNumber} has been updated to: <strong>${status}</strong>.</p><p>You can view your order details here: <a href="${orderLink}">Track Order</a></p><p><strong>SamriddhiShop Team</strong></p>`;
+      const defaultOrderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+      subject = `🔔 Order Update: Your SamriddhiShop Order #${defaultOrderIdentifier} is now ${status}.`;
+      htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr>
+              <td style="background-color:#007BFF; padding:20px; text-align:center; color:#ffffff; font-size:24px;">
+                <strong>Order Status Update</strong>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">Hi ${userName},</p>
+                <p style="font-size:16px; color:#555;">The status of your order #${defaultOrderIdentifier} has been updated to: <strong style="text-transform: capitalize;">${status}</strong>.</p>
+                <p style="font-size:16px; color:#555; margin-top:20px;">You can view the latest details of your order by clicking the button below.</p>
+                <p style="text-align:center; margin-top:20px;">
+                  <a href="${orderLink}" style="background-color:#007BFF; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order Details</a>
+                </p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.in" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">
+                © ${new Date().getFullYear()} SamriddhiShop. All rights reserved.
+              </td>
+            </tr>
+          </table>
+        </body>`;
       break;
   }
 
@@ -414,10 +571,10 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
     const transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST,
       port: process.env.EMAIL_PORT,
-      secure: false,
+      secure: false, // true for 465, false for other ports
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+        pass: process.env.EMAIL_PASS
       },
     });
 
@@ -427,7 +584,6 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
       subject: subject,
       html: htmlBody,
     });
-    console.log(`Order status email sent to ${userEmail} for status: ${status}`);
   } catch (error) {
     console.error(`Failed to send order status email to ${userEmail}:`, error);
   }
@@ -668,6 +824,11 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
 
       await order.save();
       
+      // Send order confirmation email
+      if (req.user.email) {
+        sendOrderStatusEmail(req.user.email, req.user.name, order);
+      }
+
       // Update coupon usage if coupon was used
       if (req.body.couponCode && req.body.couponId) {
         await Coupon.findByIdAndUpdate(req.body.couponId, {
@@ -729,7 +890,7 @@ app.post('/api/forgot-password', async (req, res) => {
       secure: false, // true for 465, false for other ports
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
+        pass: process.env.EMAIL_PASS
       },
     });
 
@@ -899,6 +1060,13 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
 
       await order.save();
 
+      // Send order status update email to the customer
+      const customer = await User.findById(order.userId);
+      if (customer && customer.email) {
+        sendOrderStatusEmail(customer.email, customer.name, order);
+      }
+
+
       // Create a notification for the user and send a push notification
       if (order.userId) {
         const notificationMessage = `Your order #${order.orderNumber || order._id.slice(-8)} has been updated to: ${status}.`;
@@ -969,6 +1137,12 @@ app.patch('/api/orders/:id/cancel', authenticateToken, csrfProtection, async (re
     });
 
     await order.save();
+
+    // Send cancellation confirmation email
+    if (req.user.email) {
+      sendOrderStatusEmail(req.user.email, req.user.name, order);
+    }
+
     res.json({ message: 'Your order has been successfully cancelled.', order });
   } catch (error) {
     res.status(500).json({ error: 'Failed to cancel order.' });
