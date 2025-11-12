@@ -1254,6 +1254,7 @@ app.patch('/api/orders/:id/cancel', authenticateToken, csrfProtection, async (re
     // Send cancellation confirmation email
     if (req.user.email) {
       sendOrderStatusEmail(req.user.email, req.user.name, order);
+      sendOrderCancellationAdminNotification(order, req.user); // Notify admin of the cancellation
     }
 
     res.json({ message: 'Your order has been successfully cancelled.', order });
@@ -1261,6 +1262,64 @@ app.patch('/api/orders/:id/cancel', authenticateToken, csrfProtection, async (re
     res.status(500).json({ error: 'Failed to cancel order.' });
   }
 });
+
+// --- Admin Order Cancellation Notification ---
+const sendOrderCancellationAdminNotification = async (order, user) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+  const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+  const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
+
+  // --- Send Email Notification ---
+  if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+    try {
+      const subject = `❌ Order Cancelled by Customer: #${orderIdentifier}`;
+      const htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr><td style="background-color:#DC3545; padding:20px; text-align:center; color:#ffffff; font-size:24px;"><strong>Order Cancelled by Customer</strong></td></tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">An order has been cancelled by the customer.</p>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse; margin-top:20px;">
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold; width: 150px;">Order Number:</td><td>#${orderIdentifier}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Order Total:</td><td>₹${order.total.toFixed(2)}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Customer:</td><td>${user.name} (${user.email})</td></tr>
+                </table>
+                <p style="font-size:16px; color:#555; margin-top:20px;">The order status has been updated to 'cancelled'. Please review any necessary refund procedures.</p>
+                <p style="text-align:center; margin-top:30px;"><a href="${adminOrderLink}" style="background-color:#6c757d; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order Details</a></p>
+              </td>
+            </tr>
+            <tr><td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">© ${new Date().getFullYear()} SamriddhiShop. All rights reserved.</td></tr>
+          </table>
+        </body>`;
+
+      const transporter = nodemailer.createTransport({
+        host: process.env.EMAIL_HOST, port: process.env.EMAIL_PORT, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      });
+
+      await transporter.sendMail({ from: `"SamriddhiShop Alerts" <${process.env.EMAIL_USER}>`, to: adminEmail, subject, html: htmlBody });
+    } catch (error) {
+      console.error(`Failed to send order cancellation admin email for order ${order._id}:`, error);
+    }
+  }
+
+  // --- Send Push Notification ---
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    try {
+      const adminUser = await User.findOne({ email: adminEmail });
+      if (adminUser && adminUser.pushSubscriptions.length > 0) {
+        const payload = JSON.stringify({
+          title: '❌ Order Cancelled',
+          body: `Order #${orderIdentifier} was cancelled by the customer.`,
+          url: adminOrderLink
+        });
+        adminUser.pushSubscriptions.forEach(sub => webpush.sendNotification(sub, payload).catch(err => console.error('Error sending cancellation push notification:', err)));
+      }
+    } catch (error) {
+      console.error(`Failed to send order cancellation admin push notification for order ${order._id}:`, error);
+    }
+  }
+};
 
 // Endpoint to mark that refund details have been submitted
 app.patch('/api/orders/:id/refund-details-submitted', authenticateToken, csrfProtection, async (req, res) => {
