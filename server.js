@@ -827,6 +827,7 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
       // Send order confirmation email
       if (req.user.email) {
         sendOrderStatusEmail(req.user.email, req.user.name, order);
+        sendNewOrderAdminNotification(order); // Notify admin of the new order
       }
 
       // Update coupon usage if coupon was used
@@ -853,6 +854,118 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
     }
   }
 );
+
+// --- Admin New Order Notification ---
+const sendNewOrderAdminNotification = async (order) => {
+	const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+	const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+	const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
+
+	// --- Send Email Notification ---
+	if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+		try {
+			const subject = `📦 New Order Received: #${orderIdentifier}`;
+			const customer = await User.findById(order.userId).select('name email phone');
+
+			const orderItemsHtml = order.items.map(item => `
+        <tr>
+          <td style="padding:10px; border-top:1px solid #ddd;">${item.name}</td>
+          <td align="center" style="padding:10px; border-top:1px solid #ddd;">${item.quantity}</td>
+          <td align="right" style="padding:10px; border-top:1px solid #ddd;">₹${(item.price * item.quantity).toFixed(2)}</td>
+        </tr>
+      `).join('');
+
+			const shippingAddressHtml = order.shippingAddress ? `
+        <h3 style="margin-top:30px; color:#333; border-bottom: 2px solid #eee; padding-bottom: 5px;">Shipping Address:</h3>
+        <div style="font-size:16px; color:#555; line-height:1.6;">
+          <strong>${order.shippingAddress.name}</strong><br>
+          ${order.shippingAddress.street}<br>
+          ${order.shippingAddress.city}, ${order.shippingAddress.state} ${order.shippingAddress.zipCode}<br>
+          ${order.shippingAddress.country || 'India'}<br>
+          Phone: ${order.shippingAddress.mobileNumber}
+          ${order.shippingAddress.alternateMobileNumber ? `<br>Alt Phone: ${order.shippingAddress.alternateMobileNumber}` : ''}
+        </div>
+      ` : `
+        <h3 style="margin-top:30px; color:#333; border-bottom: 2px solid #eee; padding-bottom: 5px;">Shipping Address:</h3>
+        <p style="font-size:16px; color:#555;">No shipping address provided.</p>
+      `;
+
+			const htmlBody = `
+        <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+          <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+            <tr><td style="background-color:#007BFF; padding:20px; text-align:center; color:#ffffff; font-size:24px;"><strong>New Order Notification</strong></td></tr>
+            <tr>
+              <td style="padding:30px;">
+                <p style="font-size:18px; color:#333;">A new order has been placed on SamriddhiShop.</p>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse; margin-top:20px;">
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold; width: 150px;">Order Number:</td><td>#${orderIdentifier}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Order Total:</td><td>₹${order.total.toFixed(2)}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Payment Method:</td><td>${order.paymentMethod.toUpperCase()}</td></tr>
+                  <tr><td style="background-color:#f2f2f2; font-weight:bold;">Customer:</td><td>${customer ? customer.name : 'N/A'} (${customer ? customer.email : 'N/A'})</td></tr>
+                </table>
+                <h3 style="margin-top:30px; color:#333; border-bottom: 2px solid #eee; padding-bottom: 5px;">Items Ordered:</h3>
+                <table cellpadding="10" cellspacing="0" width="100%" style="border-collapse:collapse;"><tr style="background-color:#f2f2f2;"><th align="left">Product</th><th align="center">Quantity</th><th align="right">Price</th></tr>${orderItemsHtml}</table>
+                ${shippingAddressHtml}
+                <p style="text-align:center; margin-top:30px;">
+                  <a href="${adminOrderLink}" style="background-color:#007BFF; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order in Admin Panel</a>
+                </p>
+              </td>
+            </tr>
+            <tr><td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">© ${new Date().getFullYear()} SamriddhiShop. All rights reserved.</td></tr>
+          </table>
+        </body>`;
+
+			const transporter = nodemailer.createTransport({
+				host: process.env.EMAIL_HOST,
+				port: process.env.EMAIL_PORT,
+				secure: false,
+				auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+			});
+
+			await transporter.sendMail({
+				from: `"SamriddhiShop Orders" <${process.env.EMAIL_USER}>`,
+				to: adminEmail,
+				subject: subject,
+				html: htmlBody,
+			});
+		} catch (error) {
+			console.error(`Failed to send new order admin notification email for order ${order._id}:`, error);
+		}
+	} else {
+		console.warn('Email service is not configured. Skipping admin new order notification email.');
+	}
+
+	// --- Send Push Notification ---
+	if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+		try {
+			const adminUser = await User.findOne({ email: adminEmail });
+			if (adminUser && adminUser.pushSubscriptions.length > 0) {
+				const payload = JSON.stringify({
+					title: '📦 New Order Received!',
+					body: `Order #${orderIdentifier} for ₹${order.total.toFixed(2)} has been placed.`,
+					url: adminOrderLink
+				});
+
+				adminUser.pushSubscriptions.forEach(sub => {
+					webpush.sendNotification(sub, payload).catch(async (error) => {
+						if (error.statusCode === 410) { // Gone, subscription is no longer valid
+							await User.updateOne(
+								{ _id: adminUser._id },
+								{ $pull: { pushSubscriptions: { endpoint: sub.endpoint } } }
+							);
+						} else {
+							console.error('Error sending push notification to admin:', error);
+						}
+					});
+				});
+			}
+		} catch (error) {
+			console.error(`Failed to send new order admin push notification for order ${order._id}:`, error);
+		}
+	} else {
+		console.warn('VAPID keys not configured. Skipping admin push notification.');
+	}
+};
 
 // --- Password Reset Routes ---
 
