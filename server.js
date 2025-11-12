@@ -12,7 +12,17 @@ import { z } from 'zod';
 import webpush from 'web-push';
 import nodemailer from 'nodemailer';
 
+// Load environment variables from .env file
 dotenv.config();
+
+// Check for essential environment variables at startup
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL ERROR: JWT_SECRET is not defined in .env file.');
+  process.exit(1); // Exit the process with an error code
+}
+
+// Assuming you have moved otp.js to backend/models/
+import OTP from './models/otp.js'; 
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -58,6 +68,7 @@ app.use(helmet({
 
 const whitelist = [
   'http://localhost:3000',
+  'http://localhost:5173', // Add this for Vite's default dev server
   'https://samriddhishop.netlify.app',
   process.env.FRONTEND_URL,
   'https://samriddhishop.in',
@@ -106,6 +117,19 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
+// --- Centralized Nodemailer Transporter ---
+// Create a single, reusable transporter instance.
+const emailTransporter = nodemailer.createTransport({
+  host: process.env.EMAIL_HOST,
+  port: parseInt(process.env.EMAIL_PORT || '587', 10),
+  secure: process.env.EMAIL_SECURE === 'true', // true for 465, false for other ports
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS
+  },
+});
+
+
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // Schemas
@@ -143,6 +167,7 @@ const userSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   passwordResetToken: String,
   passwordResetExpires: Date,
+  isEmailVerified: { type: Boolean, default: false }, // New field for email verification status
 });
 
 userSchema.pre('save', async function(next) {
@@ -284,6 +309,11 @@ pincodeSchema.index({ pincode: 1, officeName: 1 }, { unique: true });
 const Pincode = mongoose.model('Pincode', pincodeSchema);
 
 // NEW: Schema for the pre-aggregated State-District map
+const OTPSchema = new mongoose.Schema({
+  email: { type: String, required: true, index: true },
+  otp: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now, expires: '10m' } // OTP expires in 10 minutes
+});
 const stateDistrictMapSchema = new mongoose.Schema({
   stateName: { type: String, required: true, unique: true },
   districts: [{ type: String }]
@@ -300,7 +330,7 @@ const authenticateToken = async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const user = await User.findById(decoded.userId).select('-password');
     if (!user) {
       return res.status(401).json({ error: 'Invalid token' });
@@ -568,17 +598,7 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
   }
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: process.env.EMAIL_PORT,
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      },
-    });
-
-    await transporter.sendMail({
+    await emailTransporter.sendMail({
       from: `"SamriddhiShop" <${process.env.EMAIL_USER}>`,
       to: userEmail,
       subject: subject,
@@ -614,47 +634,196 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Zod schema for user registration
-const registerSchema = z.object({
+// Zod schema for the first step of user registration (details)
+const registerDetailsSchema = z.object({
   body: z.object({
     name: z.string().trim().min(1, { message: 'Name is required' }),
     email: z.string().email({ message: 'Invalid email address' }),
-    password: z.string().min(6, { message: 'Password must be at least 6 characters long' }),
+    password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
     phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' })
+  })
+});
+
+// Zod schema for the second step of user registration (OTP verification)
+const registerOtpSchema = z.object({
+  body: z.object({
+    email: z.string().email({ message: 'Invalid email address' }),
+    otp: z.string().trim().length(6, { message: 'OTP must be 6 digits' })
   })
 });
 
 // User registration
 app.post('/api/register', 
-  validate(registerSchema),
+  // We will validate inside the handler based on the step
   async (req, res) => {
     try {
-      const { name, email, password, phone } = req.body;
+      const { name, email, password, phone, otp } = req.body;
 
+      // 1. Verify OTP
+      const otpRecord = await OTP.findOne({ email });
+      if (!otpRecord) {
+        return res.status(400).json({ error: 'OTP has expired or is invalid. Please request a new one.' });
+      }
+
+      // The user submits a plain OTP. We need to compare it with the hashed OTP in the database.
+      // bcrypt.compare handles this securely.
+      // The first argument is the plain text, the second is the hash.
+      const isMatch = await bcrypt.compare(otp, otpRecord.otp); 
+
+      if (!isMatch) {
+        return res.status(400).json({ error: 'Invalid OTP. Please check the code and try again.' });
+      }
+
+      // OTP is correct, proceed with registration
+      // Delete the OTP so it can't be used again
+      await OTP.deleteOne({ email });
+      
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         return res.status(400).json({ error: 'User already exists' });
       }
 
-      const user = new User({ name, email, password, phone });
+      const user = new User({ name, email, password, phone, isEmailVerified: true }); // Mark as verified after OTP
       await user.save();
 
       const token = jwt.sign(
         { userId: user._id }, 
-        process.env.JWT_SECRET || 'fallback_secret_key',
+        process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
 
       res.status(201).json({
-        message: 'User created successfully',
+        message: 'Account created successfully!',
         token,
         user: { id: user._id, name: user.name, email: user.email, phone: user.phone }
       });
     } catch (error) {
+      console.error("Registration Error:", error); // Added for better debugging
       res.status(500).json({ error: 'Registration failed' });
     }
   }
 );
+
+// Endpoint to send OTP for registration
+app.post('/api/send-otp', async (req, res) => {
+  const { email, type } = req.body;
+  
+  if (!email || !type) {
+    return res.status(400).json({ error: 'Email and type are required.' });
+  }
+
+  try {
+    // For registration, check if user already exists
+    if (type === 'register') {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(409).json({ error: 'An account with this email already exists.' });
+      }
+    } else if (type === 'change-email') {
+      const existingUser = await User.findOne({ email });
+      if (existingUser && existingUser._id.toString() !== req.user._id.toString()) { // Ensure it's not another user's email
+        return res.status(409).json({ error: 'This email is already registered by another user.' });
+      }
+    }
+
+    // Generate a 6-digit OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    
+    // Hash the OTP before saving
+    const hashedOtp = await bcrypt.hash(otp, 10);
+
+    // Save OTP to the database, replacing any existing one for that email
+    await OTP.findOneAndUpdate({ email }, { otp: hashedOtp }, { upsert: true, new: true, setDefaultsOnInsert: true });
+
+    // Send the plain text OTP via email
+    const { sendOTPEmail } = await import('./utils/emailService.js');
+    await sendOTPEmail(email, otp);
+
+    res.status(200).json({ message: 'OTP sent successfully to your email.' });
+
+  } catch (error) {
+    console.error('Error sending OTP:', error);
+    // Use a generic error message for security
+    res.status(500).json({ error: 'An internal server error occurred while sending the OTP.' });
+  }
+});
+
+// Zod schema for requesting email change
+const requestEmailChangeSchema = z.object({
+  body: z.object({
+    newEmail: z.string().email({ message: 'Invalid email address' }),
+  })
+});
+
+// Endpoint to request OTP for email change
+app.post('/api/request-email-change', authenticateToken, validate(requestEmailChangeSchema), async (req, res) => {
+  const { newEmail } = req.body;
+  const userId = req.user._id;
+
+  try {
+    // Check if the new email is already registered by another user
+    const existingUser = await User.findOne({ email: newEmail });
+    if (existingUser && existingUser._id.toString() !== userId.toString()) {
+      return res.status(409).json({ error: 'This email is already registered by another user.' });
+    }
+
+    // Generate a 6-digit OTP
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const hashedOtp = await bcrypt.hash(otp, 10);
+
+    // Store OTP for the new email (this will overwrite any existing OTP for this email)
+    await OTP.findOneAndUpdate({ email: newEmail }, { otp: hashedOtp, createdAt: new Date() }, { upsert: true, new: true, setDefaultsOnInsert: true });
+
+    // Send the OTP via email
+    const { sendOTPEmail } = await import('./utils/emailService.js');
+    await sendOTPEmail(newEmail, otp);
+
+    res.status(200).json({ message: 'OTP sent to your new email address for verification.' });
+
+  } catch (error) {
+    console.error('Error requesting email change OTP:', error);
+    res.status(500).json({ error: 'An internal server error occurred while sending the OTP.' });
+  }
+});
+
+// Zod schema for verifying email change
+const verifyEmailChangeSchema = z.object({
+  body: z.object({
+    newEmail: z.string().email({ message: 'Invalid email address' }),
+    otp: z.string().trim().length(6, { message: 'OTP must be 6 digits' })
+  })
+});
+
+// Endpoint to verify OTP and change email
+app.post('/api/verify-email-change', authenticateToken, validate(verifyEmailChangeSchema), async (req, res) => {
+  const { newEmail, otp } = req.body;
+  const userId = req.user._id;
+
+  try {
+    const otpRecord = await OTP.findOne({ email: newEmail });
+    if (!otpRecord) {
+      return res.status(400).json({ error: 'OTP has expired or is invalid. Please request a new one.' });
+    }
+
+    const isMatch = await bcrypt.compare(otp, otpRecord.otp);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Invalid OTP. Please check the code and try again.' });
+    }
+
+    // OTP is correct, update user's email and mark as verified
+    const updatedUser = await User.findByIdAndUpdate(userId, { email: newEmail, isEmailVerified: true }, { new: true }).select('-password');
+    await OTP.deleteOne({ email: newEmail }); // Delete the used OTP
+
+    // Re-issue JWT token with updated user info
+    const newToken = jwt.sign({ userId: updatedUser._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
+    res.status(200).json({ message: 'Email updated and verified successfully!', token: newToken, user: { id: updatedUser._id, name: updatedUser.name, email: updatedUser.email, phone: updatedUser.phone, isEmailVerified: updatedUser.isEmailVerified } });
+
+  } catch (error) {
+    console.error('Error verifying email change:', error);
+    res.status(500).json({ error: 'An internal server error occurred.' });
+  }
+});
 
 // Zod schema for user login
 const loginSchema = z.object({
@@ -682,14 +851,14 @@ app.post('/api/login', validate(loginSchema),
 
       const token = jwt.sign(
         { userId: user._id },
-        process.env.JWT_SECRET || 'fallback_secret_key',
+        process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
 
       res.json({
         message: 'Login successful',
         token,
-        user: { id: user._id, name: user.name, email: user.email, phone: user.phone }
+        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, isEmailVerified: user.isEmailVerified }
       });
     } catch (error) {
       res.status(500).json({ error: 'Login failed' });
@@ -915,14 +1084,7 @@ const sendNewOrderAdminNotification = async (order) => {
           </table>
         </body>`;
 
-			const transporter = nodemailer.createTransport({
-				host: process.env.EMAIL_HOST,
-				port: process.env.EMAIL_PORT,
-				secure: false,
-				auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-			});
-
-			await transporter.sendMail({
+			await emailTransporter.sendMail({
 				from: `"SamriddhiShop Orders" <${process.env.EMAIL_USER}>`,
 				to: adminEmail,
 				subject: subject,
@@ -997,17 +1159,7 @@ app.post('/api/forgot-password', async (req, res) => {
     const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
     const message = `You are receiving this email because you (or someone else) have requested the reset of a password. Please click on the following link, or paste this into your browser to complete the process:\n\n${resetUrl}\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST,
-      port: process.env.EMAIL_PORT,
-      secure: false, // true for 465, false for other ports
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      },
-    });
-
-    await transporter.sendMail({
+    await emailTransporter.sendMail({
       from: `"SamriddhiShop Support" <${process.env.EMAIL_USER}>`,
       to: user.email,
       subject: 'Password Reset Request',
@@ -1293,11 +1445,7 @@ const sendOrderCancellationAdminNotification = async (order, user) => {
           </table>
         </body>`;
 
-      const transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST, port: process.env.EMAIL_PORT, secure: false, auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-      });
-
-      await transporter.sendMail({ from: `"SamriddhiShop Alerts" <${process.env.EMAIL_USER}>`, to: adminEmail, subject, html: htmlBody });
+      await emailTransporter.sendMail({ from: `"SamriddhiShop Alerts" <${process.env.EMAIL_USER}>`, to: adminEmail, subject, html: htmlBody });
     } catch (error) {
       console.error(`Failed to send order cancellation admin email for order ${order._id}:`, error);
     }
@@ -1519,7 +1667,7 @@ app.put('/api/profile', authenticateToken, csrfProtection, validate(updateProfil
       res.json({ 
         message: 'Profile updated successfully',
         user: { id: user._id, name: user.name, email: user.email, phone: user.phone }
-      });
+      }); // Note: isEmailVerified is not returned here, but it's not changed by this route.
     } catch (error) {
       res.status(500).json({ error: 'Failed to update profile' });
     }
@@ -2121,7 +2269,7 @@ app.post('/api/create-admin', csrfProtection, async (req, res) => {
     
     const token = jwt.sign(
       { userId: adminUser._id },
-      process.env.JWT_SECRET || 'fallback_secret_key',
+      process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
     
