@@ -930,6 +930,22 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
     try {
       const { items, total, discount, shippingCost, tax } = req.body;
 
+      // --- START: New Pincode Deliverability Check ---
+      const shippingAddressForCheck = req.body.shippingAddress;
+      if (!shippingAddressForCheck || !shippingAddressForCheck.zipCode) {
+        return res.status(400).json({ error: 'Shipping address with a pincode is required.' });
+      }
+
+      const pincodeToCheck = shippingAddressForCheck.zipCode;
+      const isDeliverable = await Pincode.findOne({ pincode: parseInt(pincodeToCheck, 10), deliverable: true });
+
+      if (!isDeliverable) {
+        return res.status(400).json({ 
+          error: `Sorry, we do not currently deliver to your pincode ${pincodeToCheck}. Please change the address to proceed.` 
+        });
+      }
+      // --- END: New Pincode Deliverability Check ---
+
       // Validate all products exist and calculate total
       let subtotal = 0;
       const orderItems = [];
@@ -1797,6 +1813,15 @@ const couponSchema = new mongoose.Schema({
 
 const Coupon = mongoose.model('Coupon', couponSchema);
 
+// NEW: Sub-schema for individual shipping zones
+const shippingZoneSchema = new mongoose.Schema({
+  id: { type: Number, required: true },
+  name: { type: String, required: true },
+  states: { type: String, default: '' },
+  pincodes: { type: String, default: '' },
+  cost: { type: Number, required: true }
+});
+
 // Settings Schema
 const settingsSchema = new mongoose.Schema({
   shippingCost: { type: Number, default: 0 },
@@ -1804,6 +1829,7 @@ const settingsSchema = new mongoose.Schema({
   email: { type: String, default: 'support@samriddhishop.com' },
   instagram: { type: String, default: 'https://www.instagram.com/samriddhishop?igsh=cGU3bWFiajN2emM3' },
   facebook: { type: String, default: 'https://www.facebook.com/profile.php?id=61582670666605' },
+  shippingZones: [shippingZoneSchema], // Add shipping zones array
   updatedAt: { type: Date, default: Date.now }
 });
 
@@ -2021,6 +2047,58 @@ app.post('/api/apply-coupon', authenticateToken, csrfProtection, async (req, res
   }
 });
 
+// NEW: Endpoint to calculate shipping cost based on address
+app.post('/api/calculate-shipping', async (req, res) => {
+  try {
+    const { pincode, state } = req.body;
+
+    if (!pincode) {
+      return res.status(400).json({ error: 'Pincode is required for shipping calculation.' });
+    }
+
+    const settings = await Settings.findOne({});
+    // If no settings exist, default to free shipping.
+    if (!settings) {
+      return res.json({ shippingCost: 0 });
+    }
+
+    const { shippingZones = [], shippingCost: fallbackCost = 0 } = settings;
+
+    let matchedCost = -1;
+    let bestMatchLevel = 0; // 0: fallback, 1: catch-all, 2: state, 3: pincode
+
+    const customerPincode = pincode.trim();
+    const customerState = state ? state.trim().toLowerCase() : '';
+
+    for (const zone of shippingZones) {
+      // Level 3: Direct Pincode Match (Highest priority)
+      const zonePincodes = (zone.pincodes || '').split(',').map(p => p.trim());
+      if (zonePincodes.includes(customerPincode)) {
+        matchedCost = zone.cost;
+        bestMatchLevel = 3;
+        break; // Found the best possible match
+      }
+
+      // Level 2: State Match
+      if (bestMatchLevel < 2 && customerState) {
+        const zoneStates = (zone.states || '').toLowerCase().split(',').map(s => s.trim());
+        if (zoneStates.includes(customerState)) {
+          matchedCost = zone.cost;
+          bestMatchLevel = 2;
+        }
+      }
+    }
+
+    // If no specific zone matched, use the fallback cost
+    const finalCost = matchedCost !== -1 ? matchedCost : fallbackCost;
+    res.json({ shippingCost: finalCost });
+
+  } catch (error) {
+    console.error('Error calculating shipping:', error);
+    res.status(500).json({ error: 'Could not calculate shipping cost.' });
+  }
+});
+
 // Get all public settings
 app.get('/api/settings', async (req, res) => {
   try {
@@ -2034,7 +2112,14 @@ app.get('/api/settings', async (req, res) => {
 // Admin - Update settings
 app.put('/api/admin/settings', authenticateToken, adminAuth, async (req, res) => {
   try {
-    const settings = await Settings.findOneAndUpdate({}, req.body, { upsert: true, new: true });
+    // Destructure to handle shippingZones separately
+    const { shippingZones, ...otherSettings } = req.body;
+    const settingsData = {
+      ...otherSettings,
+      shippingZones: shippingZones || [] // Ensure shippingZones is an array
+    };
+
+    const settings = await Settings.findOneAndUpdate({}, settingsData, { upsert: true, new: true });
     res.json({ message: 'Settings updated successfully', settings });
   } catch (error) {
     console.error('Error updating settings:', error);
@@ -2296,7 +2381,7 @@ app.get('/api/check-pincode/:pincode', async (req, res) => {
     const area = await Pincode.findOne({ pincode: parseInt(pincode, 10), deliverable: true });
 
     if (area) {
-      res.json({ deliverable: true, message: `Delivery available to ${area.officeName}, ${area.districtName}.` });
+      res.json({ deliverable: true, message: `Delivery available to pincode ${pincode} in ${area.districtName}, ${area.stateName}`});
     } else {
       res.status(404).json({ deliverable: false, message: 'Sorry, we do not deliver to this pincode yet.' });
     }
