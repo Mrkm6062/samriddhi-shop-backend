@@ -398,16 +398,26 @@ const validate = (schema) => (req, res, next) => {
 
 // Admin middleware
 const adminAuth = (req, res, next) => {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Authentication required' });
+  // 1. First, ensure a user object exists on the request.
+  if (!req.user || !req.user.email) {
+    // This indicates a problem with the preceding authenticateToken middleware.
+    return res.status(401).json({ error: 'Authentication error: User not found on request.' });
   }
+
   // Check if the user has the 'admin' role.
   // For backward compatibility, also check the original ADMIN_EMAIL env variable.
-  const isAdminByEmail = req.user.email === process.env.ADMIN_EMAIL;
-  const isAdminByRole = req.user.role === 'admin';
+  const isAdminByRole = req.user.role === 'admin'; // From DB
+  const isAdminByEmail = process.env.ADMIN_EMAIL && req.user.email === process.env.ADMIN_EMAIL; // From ENV var
 
   if (!isAdminByRole && !isAdminByEmail) {
-    return res.status(403).json({ error: 'Admin access required' });
+    // 2. Provide more detailed error for easier debugging in production.
+    console.log(`Admin access denied for user: ${req.user.email}. Role: '${req.user.role}', ADMIN_EMAIL configured: ${!!process.env.ADMIN_EMAIL}`);
+    return res.status(403).json({ 
+      error: 'Admin access required.',
+      // You might want to remove these details in a final production version for security,
+      // but they are very helpful for debugging now.
+      details: `Access denied. User role is '${req.user.role || 'undefined'}'.`
+    });
   }
   next();
 };
