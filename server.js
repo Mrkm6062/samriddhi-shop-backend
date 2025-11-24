@@ -398,10 +398,13 @@ const validate = (schema) => (req, res, next) => {
 
 // Admin middleware
 const adminAuth = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
   // Check if the user has the 'admin' role.
   // For backward compatibility, also check the original ADMIN_EMAIL env variable.
-  const isAdminByRole = req.user.role === 'admin';
   const isAdminByEmail = req.user.email === process.env.ADMIN_EMAIL;
+  const isAdminByRole = req.user.role === 'admin';
 
   if (!isAdminByRole && !isAdminByEmail) {
     return res.status(403).json({ error: 'Admin access required' });
