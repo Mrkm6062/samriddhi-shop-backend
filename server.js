@@ -168,6 +168,7 @@ const userSchema = new mongoose.Schema({
   passwordResetToken: String,
   passwordResetExpires: Date,
   isEmailVerified: { type: Boolean, default: false }, // New field for email verification status
+  role: { type: String, enum: ['user', 'admin'], default: 'user' }, // Add role field
 });
 
 userSchema.pre('save', async function(next) {
@@ -188,6 +189,7 @@ const productSchema = new mongoose.Schema({
   imageUrl: { type: String, required: true },
   images: [{ type: String }],
   category: { type: String, required: true },
+  soldBy: { type: String, trim: true }, // To store the wholesaler/seller name
   stock: { type: Number, default: 0, min: 0 },
   variants: [{
     size: String,
@@ -396,8 +398,12 @@ const validate = (schema) => (req, res, next) => {
 
 // Admin middleware
 const adminAuth = (req, res, next) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@samriddhishop.com';
-  if (req.user.email !== adminEmail) {
+  // Check if the user has the 'admin' role.
+  // For backward compatibility, also check the original ADMIN_EMAIL env variable.
+  const isAdminByRole = req.user.role === 'admin';
+  const isAdminByEmail = req.user.email === process.env.ADMIN_EMAIL;
+
+  if (!isAdminByRole && !isAdminByEmail) {
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
@@ -850,7 +856,7 @@ app.post('/api/login', validate(loginSchema),
       }
 
       const token = jwt.sign(
-        { userId: user._id },
+        { userId: user._id, role: user.role }, // Add role to JWT payload
         process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
@@ -858,7 +864,7 @@ app.post('/api/login', validate(loginSchema),
       res.json({
         message: 'Login successful',
         token,
-        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, isEmailVerified: user.isEmailVerified }
+        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, isEmailVerified: user.isEmailVerified, role: user.role } // Add role to user object in response
       });
     } catch (error) {
       res.status(500).json({ error: 'Login failed' });
@@ -1880,8 +1886,15 @@ app.get('/api/admin/products', authenticateToken, adminAuth, async (req, res) =>
 // Admin - Add product
 app.post('/api/admin/products', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
-    const product = new Product(req.body);
+    // Explicitly destructure fields from req.body for security and clarity
+    const { name, description, price, originalPrice, discountPercentage, imageUrl, images, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled } = req.body;
+
+    const product = new Product({
+      name, description, price, originalPrice, discountPercentage, imageUrl, images, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled
+    });
+
     await product.save();
+
     res.json({ message: 'Product added successfully', product });
   } catch (error) {
     // Log the detailed error on the server for debugging
@@ -1894,7 +1907,14 @@ app.post('/api/admin/products', authenticateToken, adminAuth, csrfProtection, as
 // Admin - Update product
 app.put('/api/admin/products/:id', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
   try {
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // For updates, it's also good practice to be explicit.
+    // We can create an update object with all the fields from the body.
+    const updateData = req.body;
+
+    const product = await Product.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
     res.json({ message: 'Product updated successfully', product });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update product' });
@@ -1961,6 +1981,36 @@ app.get('/api/admin/users', authenticateToken, adminAuth, async (req, res) => {
     res.json(usersWithStats);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// Admin - Create a new user (can be admin or user)
+app.post('/api/admin/users', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+  try {
+    const { name, email, password, phone, role } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required.' });
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ error: 'A user with this email already exists.' });
+    }
+
+    const newUser = new User({
+      name,
+      email,
+      password, // The 'pre-save' hook will hash this automatically
+      phone,
+      role: role === 'admin' ? 'admin' : 'user', // Ensure role is either 'admin' or defaults to 'user'
+      isEmailVerified: true, // Admins create verified users
+    });
+
+    await newUser.save();
+    res.status(201).json({ message: 'User created successfully.', user: { id: newUser._id, name: newUser.name, email: newUser.email, role: newUser.role } });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create user.' });
   }
 });
 
