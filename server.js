@@ -12,6 +12,7 @@ import { z } from 'zod';
 import webpush from 'web-push';
 import nodemailer from 'nodemailer';
 import xss from 'xss';
+import sanitizeHtml from "nohtml";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -404,6 +405,12 @@ const validate = (schema) => (req, res, next) => {
   }
 };
 
+// Zod schema for sanitizing strings to prevent HTML tags
+const NoHTML = z.string().trim().refine(val => !/<[^>]*>/.test(val), {
+  message: "HTML tags are not allowed"
+});
+
+
 // Admin middleware
 const adminAuth = (req, res, next) => {
   // 1. First, ensure a user object exists on the request.
@@ -665,7 +672,7 @@ app.get('/api/products/:id', async (req, res) => {
 const registerSchema = z.object({
   body: z.object({
     name: NoHTML.min(1, { message: 'Name is required' }),
-    email: NoHTML.email({ message: 'Invalid email address' }),
+    email: z.string().email({ message: 'Invalid email address' }),
     password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
     phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' }).refine(val => /^\d+$/.test(val), { message: "Phone number must contain only digits" }),
     otp: z.string().trim().length(6, { message: 'OTP must be 6 digits' })
@@ -854,7 +861,7 @@ app.post('/api/verify-email-change', authenticateToken, validate(verifyEmailChan
 const loginSchema = z.object({
   body: z.object({
     // Apply NoHTML validation to the email field as well
-    email: NoHTML.email({ message: 'Invalid email address' }),
+    email: z.string().email({ message: 'Invalid email address' }),
     password: z.string().min(1, { message: 'Password is required' })
   })
 });
@@ -2379,10 +2386,6 @@ app.delete('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, r
 });
 
 // Zod schema for contact form
-const NoHTML = z.string().trim().refine(val => !/<[^>]*>/.test(val), {
-  message: "HTML tags are not allowed"
-});
-
 const contactSchemaZod = z.object({
   body: z.object({
     name: NoHTML.min(2, { message: 'Name must be at least 2 characters long' }),
