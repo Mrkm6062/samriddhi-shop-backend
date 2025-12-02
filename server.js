@@ -75,6 +75,7 @@ const whitelist = [
   'https://samriddhishop.netlify.app',
   process.env.FRONTEND_URL,
   'https://samriddhishop.in',
+  'https://samriddhishop.info', // Add the domain from the error message
   'https://samriddhishopproduction.netlify.app',
 ];
 
