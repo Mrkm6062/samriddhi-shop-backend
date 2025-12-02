@@ -79,7 +79,15 @@ const whitelist = [
 ];
 
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'development' ? '*' : whitelist.filter(Boolean),
+  // Use a function for the origin to dynamically check against the whitelist.
+  // This is more robust, especially for handling preflight requests.
+  origin: function (origin, callback) {
+    if (!origin || whitelist.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 };
 app.use(cors(corsOptions));
