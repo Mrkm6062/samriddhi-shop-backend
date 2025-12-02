@@ -25,6 +25,8 @@ if (!process.env.JWT_SECRET) {
 // Assuming you have moved otp.js to backend/models/
 import OTP from './models/otp.js'; 
 
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -136,9 +138,6 @@ const emailTransporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS
   },
 });
-
-
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // Schemas
 const cartItemSchema = new mongoose.Schema({
