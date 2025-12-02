@@ -68,7 +68,8 @@ app.use(helmet({
 }));
 
 const whitelist = [
- // Add this for Vite's default dev server
+  'http://localhost:3000',
+  'http://localhost:5173', // Add this for Vite's default dev server
   'https://samriddhishop.netlify.app',
   process.env.FRONTEND_URL,
   'https://samriddhishop.in',
