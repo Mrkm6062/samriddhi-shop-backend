@@ -11,6 +11,7 @@ import Razorpay from 'razorpay';
 import { z } from 'zod';
 import webpush from 'web-push';
 import nodemailer from 'nodemailer';
+import xss from 'xss';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -34,7 +35,10 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet({
   // 1. Configure a strong Content Security Policy (CSP)
-  contentSecurityPolicy: {
+  // We let the _headers.yaml file handle the main CSP, but provide a fallback for API-only access.
+  // The settings here are more relaxed for API endpoints.
+  // In a Netlify proxy setup, the _headers.yaml CSP will typically override this one for browser requests.
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "https://checkout.razorpay.com", "https://connect.facebook.net"],
@@ -55,20 +59,17 @@ app.use(helmet({
       requireTrustedTypesFor: ["'script'"], // Mitigate DOM-based XSS with Trusted Types
       upgradeInsecureRequests: [],
     },
-  },
-  // 2. Set a strong HSTS policy: 2 years, include subdomains, preload
-  strictTransportSecurity: {
-    maxAge: 63072000,
-    includeSubDomains: true,
-    preload: true,
-  },
+  } : false, // Disable CSP in development to avoid conflicts
+  // Disable headers that are already being set by Netlify's _headers.yaml to avoid duplication.
+  frameguard: false, // Disables X-Frame-Options
+  hsts: false, // Disables Strict-Transport-Security
+  noSniff: false, // Disables X-Content-Type-Options
   // 3. Isolate the origin
   crossOriginOpenerPolicy: { policy: "same-origin" },
 }));
 
 const whitelist = [
-  'http://localhost:3000',
-  'http://localhost:5173', // Add this for Vite's default dev server
+ // Add this for Vite's default dev server
   'https://samriddhishop.netlify.app',
   process.env.FRONTEND_URL,
   'https://samriddhishop.in',
@@ -94,6 +95,13 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50, // increased from 5 to 50
   message: 'Too many authentication attempts, please try again later.'
+});
+
+// Stricter rate limiting for contact form submissions
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: 'Too many contact form submissions from this IP, please try again after an hour.'
 });
 
 app.use(express.json({ limit: '10mb' }));
@@ -653,37 +661,33 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Zod schema for the first step of user registration (details)
-const registerDetailsSchema = z.object({
+// Zod schema for user registration, combining all required fields
+const registerSchema = z.object({
   body: z.object({
-    name: z.string().trim().min(1, { message: 'Name is required' }),
-    email: z.string().email({ message: 'Invalid email address' }),
+    name: NoHTML.min(1, { message: 'Name is required' }),
+    email: NoHTML.email({ message: 'Invalid email address' }),
     password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
-    phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' })
-  })
-});
-
-// Zod schema for the second step of user registration (OTP verification)
-const registerOtpSchema = z.object({
-  body: z.object({
-    email: z.string().email({ message: 'Invalid email address' }),
+    phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' }).refine(val => /^\d+$/.test(val), { message: "Phone number must contain only digits" }),
     otp: z.string().trim().length(6, { message: 'OTP must be 6 digits' })
   })
 });
 
 // User registration
-app.post('/api/register', 
-  // We will validate inside the handler based on the step
+app.post('/api/register', validate(registerSchema),
   async (req, res) => {
     try {
-      const { name, email, password, phone, otp } = req.body;
+      // Sanitize inputs after validation
+      const name = xss(req.body.name).replace(/[\r\n]/g, '');
+      const email = xss(req.body.email).replace(/[\r\n]/g, '');
+      const password = req.body.password; // Password is not sanitized to preserve special characters
+      const phone = xss(req.body.phone);
+      const otp = req.body.otp;
 
       // 1. Verify OTP
       const otpRecord = await OTP.findOne({ email });
       if (!otpRecord) {
         return res.status(400).json({ error: 'OTP has expired or is invalid. Please request a new one.' });
       }
-
       // The user submits a plain OTP. We need to compare it with the hashed OTP in the database.
       // bcrypt.compare handles this securely.
       // The first argument is the plain text, the second is the hash.
@@ -725,14 +729,16 @@ app.post('/api/register',
 
 // Endpoint to send OTP for registration
 app.post('/api/send-otp', async (req, res) => {
-  const { email, type } = req.body;
+  // Sanitize email to prevent XSS and email injection
+  const email = xss(req.body.email || '').replace(/[\r\n]/g, '');
+  const type = req.body.type;
   
   if (!email || !type) {
     return res.status(400).json({ error: 'Email and type are required.' });
   }
 
   try {
-    // For registration, check if user already exists
+    // For registration, check if user already exists with the sanitized email
     if (type === 'register') {
       const existingUser = await User.findOne({ email });
       if (existingUser) {
@@ -847,7 +853,8 @@ app.post('/api/verify-email-change', authenticateToken, validate(verifyEmailChan
 // Zod schema for user login
 const loginSchema = z.object({
   body: z.object({
-    email: z.string().email({ message: 'Invalid email address' }),
+    // Apply NoHTML validation to the email field as well
+    email: NoHTML.email({ message: 'Invalid email address' }),
     password: z.string().min(1, { message: 'Password is required' })
   })
 });
@@ -856,7 +863,9 @@ const loginSchema = z.object({
 app.post('/api/login', validate(loginSchema),
   async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const { password } = req.body;
+      // Sanitize email to prevent XSS and email injection before using it in a query
+      const email = xss(req.body.email).replace(/[\r\n]/g, '');
 
       const user = await User.findOne({ email });
       if (!user) {
@@ -1031,6 +1040,7 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
       // Send order confirmation email
       if (req.user.email) {
         sendOrderStatusEmail(req.user.email, req.user.name, order);
+        // This function also handles push notifications
         sendNewOrderAdminNotification(order); // Notify admin of the new order
       }
 
@@ -1164,17 +1174,78 @@ const sendNewOrderAdminNotification = async (order) => {
 	}
 };
 
+// --- Admin Order Status Update Notification ---
+const sendAdminOrderStatusUpdateEmail = async (order, newStatus) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+  if (!adminEmail || !['shipped', 'delivered'].includes(newStatus)) {
+    return; // Only send for shipped or delivered, and if admin email is set
+  }
+
+  if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    console.warn('Email service is not configured. Skipping admin order status update email.');
+    return;
+  }
+
+  const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
+  const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
+  let subject = '';
+  let htmlBody = '';
+
+  try {
+    const customer = await User.findById(order.userId).select('name email');
+    const customerInfo = customer ? `${customer.name} (${customer.email})` : 'N/A';
+
+    if (newStatus === 'shipped') {
+      subject = `🚚 Order Shipped: #${orderIdentifier}`;
+      htmlBody = `
+        <p>Order #${orderIdentifier} for customer <strong>${customerInfo}</strong> has been marked as <strong>shipped</strong>.</p>
+        <p><strong>Courier:</strong> ${order.courierDetails?.courierName || 'N/A'}</p>
+        <p><strong>Tracking Number:</strong> ${order.courierDetails?.trackingNumber || 'N/A'}</p>
+      `;
+    } else if (newStatus === 'delivered') {
+      subject = `📦 Order Delivered: #${orderIdentifier}`;
+      htmlBody = `<p>Order #${orderIdentifier} for customer <strong>${customerInfo}</strong> has been marked as <strong>delivered</strong>.</p>`;
+    }
+
+    const fullHtml = `
+      <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
+        <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
+          <tr><td style="background-color:#007BFF; padding:20px; text-align:center; color:#ffffff; font-size:24px;"><strong>Order Status Update</strong></td></tr>
+          <tr>
+            <td style="padding:30px; font-size:16px; color:#333; line-height:1.6;">
+              ${htmlBody}
+              <p style="text-align:center; margin-top:30px;">
+                <a href="${adminOrderLink}" style="background-color:#007BFF; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order in Admin Panel</a>
+              </p>
+            </td>
+          </tr>
+          <tr><td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">© ${new Date().getFullYear()} SamriddhiShop. All rights reserved.</td></tr>
+        </table>
+      </body>`;
+
+    await emailTransporter.sendMail({
+      from: `"SamriddhiShop Alerts" <${process.env.EMAIL_USER}>`,
+      to: adminEmail,
+      subject: subject,
+      html: fullHtml,
+    });
+  } catch (error) {
+    console.error(`Failed to send admin status update email for order ${order._id}:`, error);
+  }
+};
+
 // --- Password Reset Routes ---
 
 // 1. Forgot Password - User requests a reset link
 app.post('/api/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body;
+    // Sanitize email to prevent XSS and email injection
+    const email = xss(req.body.email || '').replace(/[\r\n]/g, '');
     const user = await User.findOne({ email });
 
     if (!user) {
-      // To prevent email enumeration, we send a success response even if the user doesn't exist.
-      return res.json({ message: 'If a user with that email exists, a password reset link has been sent.' });
+      // As requested, explicitly inform the user if the email is not registered.
+      return res.status(404).json({ error: 'User with this email is not registered.' });
     }
 
     // Generate a reset token
@@ -1364,6 +1435,7 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
       const customer = await User.findById(order.userId);
       if (customer && customer.email) {
         sendOrderStatusEmail(customer.email, customer.name, order);
+        sendAdminOrderStatusUpdateEmail(order, status); // Notify admin of the status change
       }
 
 
@@ -1676,9 +1748,9 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 // Zod schema for profile update
 const updateProfileSchema = z.object({
   body: z.object({
-    name: z.string().trim().min(1, { message: 'Name is required' }),
+    name: NoHTML.min(1, { message: 'Name is required' }),
     email: z.string().email({ message: 'Invalid email address' }),
-    phone: z.string().trim().optional()
+    phone: NoHTML.optional()
   })
 });
 
@@ -1686,16 +1758,21 @@ const updateProfileSchema = z.object({
 app.put('/api/profile', authenticateToken, csrfProtection, validate(updateProfileSchema),
   async (req, res) => {
     try {
-      const { name, email, phone } = req.body;
+      // Sanitize all inputs to prevent XSS and Email Injection attacks
+      const name = xss(req.body.name).replace(/[\r\n]/g, '');
+      const email = xss(req.body.email).replace(/[\r\n]/g, '');
+      const phone = req.body.phone ? xss(req.body.phone).replace(/[\r\n]/g, '') : undefined;
       
       const existingUser = await User.findOne({ email, _id: { $ne: req.user._id } });
       if (existingUser) {
         return res.status(400).json({ error: 'Email already in use' });
       }
 
+      const updateData = { name, email, phone };
+
       const user = await User.findByIdAndUpdate(
         req.user._id,
-        { name, email, phone },
+        { $set: updateData },
         { new: true }
       ).select('-password');
 
@@ -1743,24 +1820,37 @@ app.put('/api/change-password', authenticateToken, csrfProtection, validate(chan
 // Zod schema for adding an address
 const addAddressSchema = z.object({
   body: z.object({
-    name: z.string().trim().min(1, { message: 'Name is required' }),
+    name: NoHTML.min(1, { message: 'Name is required' }),
     mobileNumber: z.string().trim().min(10, { message: 'Mobile number must be at least 10 digits' }),
     alternateMobileNumber: z.string().trim().optional(),
     addressType: z.enum(['home', 'work']),
-    street: z.string().trim().min(1, { message: 'Street/House No. is required' }),
-    city: z.string().trim().min(1, { message: 'City/Town is required' }),
-    zipCode: z.string().trim().min(6, { message: 'A 6-digit Pincode is required' })
+    street: NoHTML.min(1, { message: 'Street/House No. is required' }),
+    city: NoHTML.min(1, { message: 'City/Town is required' }),
+    state: NoHTML.optional(),
+    zipCode: z.string().trim().length(6, { message: 'A 6-digit Pincode is required' }),
+    country: NoHTML.optional()
   })
 });
 
 // Add address
 app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddressSchema),
   async (req, res) => {
-    try {
-      const { name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country } = req.body;
-      
+    try {      
       const user = await User.findById(req.user._id);
-      user.addresses.push({ name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country: country || 'India' });
+      // Sanitize all string inputs before saving
+      const newAddress = {
+        name: xss(req.body.name),
+        mobileNumber: xss(req.body.mobileNumber),
+        alternateMobileNumber: req.body.alternateMobileNumber ? xss(req.body.alternateMobileNumber) : undefined,
+        addressType: req.body.addressType,
+        street: xss(req.body.street),
+        city: xss(req.body.city),
+        state: req.body.state ? xss(req.body.state) : undefined,
+        zipCode: xss(req.body.zipCode),
+        country: req.body.country ? xss(req.body.country) : 'India'
+      };
+
+      user.addresses.push(newAddress);
       await user.save();
 
       res.json({ message: 'Address added successfully' });
@@ -1775,7 +1865,18 @@ app.put('/api/addresses/:id', authenticateToken, csrfProtection, validate(addAdd
   async (req, res) => {
     try {
       const { id } = req.params;
-      const updatedAddressData = req.body;
+      // Sanitize all string inputs before updating
+      const updatedAddressData = {
+        name: xss(req.body.name),
+        mobileNumber: xss(req.body.mobileNumber),
+        alternateMobileNumber: req.body.alternateMobileNumber ? xss(req.body.alternateMobileNumber) : undefined,
+        addressType: req.body.addressType,
+        street: xss(req.body.street),
+        city: xss(req.body.city),
+        state: req.body.state ? xss(req.body.state) : undefined,
+        zipCode: xss(req.body.zipCode),
+        country: req.body.country ? xss(req.body.country) : 'India'
+      };
 
       const user = await User.findById(req.user._id);
       if (!user) {
@@ -1873,18 +1974,6 @@ const bannerSchema = new mongoose.Schema({
 });
 
 const Banner = mongoose.model('Banner', bannerSchema);
-
-// Contact Schema
-const contactSchema = new mongoose.Schema({
-  name: { type: String, required: true, trim: true },
-  email: { type: String, required: true, lowercase: true },
-  subject: { type: String, required: true, trim: true },
-  message: { type: String, required: true, trim: true },
-  status: { type: String, enum: ['new', 'read', 'replied'], default: 'new' },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const Contact = mongoose.model('Contact', contactSchema);
 
 // Admin - Get all products
 app.get('/api/admin/products', authenticateToken, adminAuth, async (req, res) => {
@@ -2190,14 +2279,26 @@ app.put('/api/admin/settings', authenticateToken, adminAuth, async (req, res) =>
   }
 });
 
+// Zod schema for adding/updating a product rating and review
+const ratingSchema = z.object({
+  body: z.object({
+    rating: z.number().min(1).max(5),
+    // Use the NoHTML validator and also allow an empty review
+    review: NoHTML.optional(),
+  }),
+  params: z.object({
+    id: z.string().refine((val) => mongoose.Types.ObjectId.isValid(val), { message: "Invalid product ID" }),
+  }),
+});
+
 // Add product rating
-app.post('/api/products/:id/rating', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/products/:id/rating', authenticateToken, csrfProtection, validate(ratingSchema), async (req, res) => {
   try {
     const { rating, review } = req.body;
     const productId = req.params.id;
     
     const product = await Product.findById(productId);
-    if (!product) {
+    if (!product) { // This check is technically redundant due to Zod validation, but good for clarity
       return res.status(404).json({ error: 'Product not found' });
     }
     
@@ -2207,13 +2308,13 @@ app.post('/api/products/:id/rating', authenticateToken, csrfProtection, async (r
     if (existingRating) {
       // Update existing rating
       existingRating.rating = rating;
-      existingRating.review = review;
+      existingRating.review = xss(review || ''); // Sanitize before saving
     } else {
       // Add new rating
       product.ratings.push({
         userId: req.user._id,
         rating,
-        review
+        review: xss(review || '') // Sanitize before saving
       });
     }
     
@@ -2340,19 +2441,27 @@ app.delete('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, r
 });
 
 // Zod schema for contact form
+const NoHTML = z.string().trim().refine(val => !/<[^>]*>/.test(val), {
+  message: "HTML tags are not allowed"
+});
+
 const contactSchemaZod = z.object({
   body: z.object({
-    name: z.string().trim().min(1, { message: 'Name is required' }),
+    name: NoHTML.min(2, { message: 'Name must be at least 2 characters long' }),
     email: z.string().email({ message: 'Invalid email address' }),
-    subject: z.string().trim().min(1, { message: 'Subject is required' }),
-    message: z.string().trim().min(10, { message: 'Message must be at least 10 characters long' })
+    subject: NoHTML.min(3, { message: 'Subject must be at least 3 characters long' }),
+    message: NoHTML.min(10, { message: 'Message must be at least 10 characters long' })
   })
 });
 
 // Contact form submission
-app.post('/api/contact', validate(contactSchemaZod),
+app.post('/api/contact', contactLimiter, validate(contactSchemaZod),
   async (req, res) => {
-    const { name, email, subject, message } = req.body;
+    // Sanitize all inputs to prevent XSS and Email Injection attacks
+    const name = xss(req.body.name).replace(/[\r\n]/g, '');
+    const email = xss(req.body.email).replace(/[\r\n]/g, '');
+    const subject = xss(req.body.subject).replace(/[\r\n]/g, '');
+    const message = xss(req.body.message); // Newlines are allowed in the message body
 
     // Ensure email service is configured before proceeding
     if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -2369,7 +2478,6 @@ app.post('/api/contact', validate(contactSchemaZod),
         replyTo: email, // Set the user's email as the reply-to address
         subject: `New Contact Form Submission: ${subject}`,
         html: `
-          <p>You have received a new message from your website's contact form.</p>
           <p><strong>Name:</strong> ${name}</p>
           <p><strong>Email:</strong> ${email}</p>
           <p><strong>Subject:</strong> ${subject}</p>
@@ -2385,27 +2493,6 @@ app.post('/api/contact', validate(contactSchemaZod),
     }
   }
 );
-
-// Admin - Get all contact messages
-app.get('/api/admin/contacts', authenticateToken, adminAuth, async (req, res) => {
-  try {
-    const contacts = await Contact.find().sort({ createdAt: -1 });
-    res.json(contacts);
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch contact messages' });
-  }
-});
-
-// Admin - Update contact message status
-app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
-  try {
-    const { status } = req.body;
-    await Contact.findByIdAndUpdate(req.params.id, { status });
-    res.json({ message: 'Status updated successfully' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to update status' });
-  }
-});
 
 // Create admin account (bypasses rate limiting)
 app.post('/api/create-admin', csrfProtection, async (req, res) => {
