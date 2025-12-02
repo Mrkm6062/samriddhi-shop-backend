@@ -11,7 +11,6 @@ import Razorpay from 'razorpay';
 import { z } from 'zod';
 import webpush from 'web-push';
 import nodemailer from 'nodemailer';
-import xss from 'xss';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -2353,17 +2352,7 @@ const contactSchemaZod = z.object({
 // Contact form submission
 app.post('/api/contact', validate(contactSchemaZod),
   async (req, res) => {
-    // Explicitly check for and reject any HTML tags in the raw input
-    const hasHTML = /<[^>]*>/;
-    if (hasHTML.test(req.body.name) || hasHTML.test(req.body.email) || hasHTML.test(req.body.subject) || hasHTML.test(req.body.message)) {
-      return res.status(400).json({ error: "HTML tags are not allowed in the contact form." });
-    }
-
-    // Sanitize all inputs to prevent XSS attacks
-    const name = xss(req.body.name);
-    const email = xss(req.body.email);
-    const subject = xss(req.body.subject);
-    const message = xss(req.body.message);
+    const { name, email, subject, message } = req.body;
 
     // Ensure email service is configured before proceeding
     if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -2378,7 +2367,7 @@ app.post('/api/contact', validate(contactSchemaZod),
         from: `"SamriddhiShop Contact Form" <${process.env.EMAIL_USER}>`,
         to: adminEmail,
         replyTo: email, // Set the user's email as the reply-to address
-        subject: `New Contact Form Submission: ${subject}`,
+        subject: `New Contact Form Submission:  ${subject}`,
         html: `
           <p><strong>Name:</strong> ${name}</p>
           <p><strong>Email:</strong> ${email}</p>
