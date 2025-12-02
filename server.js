@@ -73,6 +73,7 @@ app.use(helmet({
 const whitelist = [
   "http://localhost:5173",
   "https://samriddhishop.in",
+  process.env.FRONTEND_URL,
   "https://samriddhishop.netlify.app",
   "https://samriddhishopproduction.netlify.app",
   process.env.FRONTEND_URL
