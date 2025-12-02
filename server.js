@@ -1040,7 +1040,6 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
       // Send order confirmation email
       if (req.user.email) {
         sendOrderStatusEmail(req.user.email, req.user.name, order);
-        // This function also handles push notifications
         sendNewOrderAdminNotification(order); // Notify admin of the new order
       }
 
@@ -1172,66 +1171,6 @@ const sendNewOrderAdminNotification = async (order) => {
 	} else {
 		console.warn('VAPID keys not configured. Skipping admin push notification.');
 	}
-};
-
-// --- Admin Order Status Update Notification ---
-const sendAdminOrderStatusUpdateEmail = async (order, newStatus) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
-  if (!adminEmail || !['shipped', 'delivered'].includes(newStatus)) {
-    return; // Only send for shipped or delivered, and if admin email is set
-  }
-
-  if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('Email service is not configured. Skipping admin order status update email.');
-    return;
-  }
-
-  const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
-  const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
-  let subject = '';
-  let htmlBody = '';
-
-  try {
-    const customer = await User.findById(order.userId).select('name email');
-    const customerInfo = customer ? `${customer.name} (${customer.email})` : 'N/A';
-
-    if (newStatus === 'shipped') {
-      subject = `🚚 Order Shipped: #${orderIdentifier}`;
-      htmlBody = `
-        <p>Order #${orderIdentifier} for customer <strong>${customerInfo}</strong> has been marked as <strong>shipped</strong>.</p>
-        <p><strong>Courier:</strong> ${order.courierDetails?.courierName || 'N/A'}</p>
-        <p><strong>Tracking Number:</strong> ${order.courierDetails?.trackingNumber || 'N/A'}</p>
-      `;
-    } else if (newStatus === 'delivered') {
-      subject = `📦 Order Delivered: #${orderIdentifier}`;
-      htmlBody = `<p>Order #${orderIdentifier} for customer <strong>${customerInfo}</strong> has been marked as <strong>delivered</strong>.</p>`;
-    }
-
-    const fullHtml = `
-      <body style="margin:0; padding:0; background-color:#f7f7f7; font-family: Arial, sans-serif;">
-        <table align="center" cellpadding="0" cellspacing="0" width="600" style="background-color:#ffffff; border-radius:8px; overflow:hidden; margin-top:40px; border: 1px solid #ddd;">
-          <tr><td style="background-color:#007BFF; padding:20px; text-align:center; color:#ffffff; font-size:24px;"><strong>Order Status Update</strong></td></tr>
-          <tr>
-            <td style="padding:30px; font-size:16px; color:#333; line-height:1.6;">
-              ${htmlBody}
-              <p style="text-align:center; margin-top:30px;">
-                <a href="${adminOrderLink}" style="background-color:#007BFF; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order in Admin Panel</a>
-              </p>
-            </td>
-          </tr>
-          <tr><td style="background-color:#f2f2f2; text-align:center; padding:15px; font-size:12px; color:#777;">© ${new Date().getFullYear()} SamriddhiShop. All rights reserved.</td></tr>
-        </table>
-      </body>`;
-
-    await emailTransporter.sendMail({
-      from: `"SamriddhiShop Alerts" <${process.env.EMAIL_USER}>`,
-      to: adminEmail,
-      subject: subject,
-      html: fullHtml,
-    });
-  } catch (error) {
-    console.error(`Failed to send admin status update email for order ${order._id}:`, error);
-  }
 };
 
 // --- Password Reset Routes ---
@@ -1435,7 +1374,6 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
       const customer = await User.findById(order.userId);
       if (customer && customer.email) {
         sendOrderStatusEmail(customer.email, customer.name, order);
-        sendAdminOrderStatusUpdateEmail(order, status); // Notify admin of the status change
       }
 
 
