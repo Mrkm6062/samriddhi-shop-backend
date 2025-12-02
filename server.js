@@ -71,19 +71,24 @@ app.use(helmet({
 }));
 
 const whitelist = [
- // Add this for Vite's default dev server
-  'https://samriddhishop.netlify.app',
-  process.env.FRONTEND_URL,
-  'https://samriddhishop.in',
-  'https://samriddhishop.info', // Add the domain from the error message
-  'https://samriddhishopproduction.netlify.app',
+  "http://localhost:5173",
+  "https://samriddhishop.in",
+  "https://samriddhishop.netlify.app",
+  "https://samriddhishopproduction.netlify.app",
+  process.env.FRONTEND_URL
 ];
 
 const corsOptions = {
-  // In production, explicitly trust the origins in the whitelist.
-  origin: whitelist.filter(Boolean),
-  credentials: true,
+  origin: function (origin, callback) {
+    if (!origin || whitelist.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS BLOCKED: " + origin));
+    }
+  },
+  credentials: true
 };
+
 app.use(cors(corsOptions));
 
 // Rate limiting (relaxed for better user experience)
