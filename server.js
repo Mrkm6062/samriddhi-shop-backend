@@ -12,7 +12,6 @@ import { z } from 'zod';
 import webpush from 'web-push';
 import nodemailer from 'nodemailer';
 import xss from 'xss';
-import sanitizeHtml from "nohtml";
 
 // Load environment variables from .env file
 dotenv.config();
@@ -96,13 +95,6 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 50, // increased from 5 to 50
   message: 'Too many authentication attempts, please try again later.'
-});
-
-// Stricter rate limiting for contact form submissions
-const contactLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10,
-  message: 'Too many contact form submissions from this IP, please try again after an hour.'
 });
 
 app.use(express.json({ limit: '10mb' }));
@@ -405,12 +397,6 @@ const validate = (schema) => (req, res, next) => {
   }
 };
 
-// Zod schema for sanitizing strings to prevent HTML tags
-const NoHTML = z.string().trim().refine(val => !/<[^>]*>/.test(val), {
-  message: "HTML tags are not allowed"
-});
-
-
 // Admin middleware
 const adminAuth = (req, res, next) => {
   // 1. First, ensure a user object exists on the request.
@@ -668,33 +654,37 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Zod schema for user registration, combining all required fields
-const registerSchema = z.object({
+// Zod schema for the first step of user registration (details)
+const registerDetailsSchema = z.object({
   body: z.object({
-    name: NoHTML.min(1, { message: 'Name is required' }),
+    name: z.string().trim().min(1, { message: 'Name is required' }),
     email: z.string().email({ message: 'Invalid email address' }),
     password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
-    phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' }).refine(val => /^\d+$/.test(val), { message: "Phone number must contain only digits" }),
+    phone: z.string().trim().min(10, { message: 'Phone number must be at least 10 digits' })
+  })
+});
+
+// Zod schema for the second step of user registration (OTP verification)
+const registerOtpSchema = z.object({
+  body: z.object({
+    email: z.string().email({ message: 'Invalid email address' }),
     otp: z.string().trim().length(6, { message: 'OTP must be 6 digits' })
   })
 });
 
 // User registration
-app.post('/api/register', validate(registerSchema),
+app.post('/api/register', 
+  // We will validate inside the handler based on the step
   async (req, res) => {
     try {
-      // Sanitize inputs after validation
-      const name = xss(req.body.name).replace(/[\r\n]/g, '');
-      const email = xss(req.body.email).replace(/[\r\n]/g, '');
-      const password = req.body.password; // Password is not sanitized to preserve special characters
-      const phone = xss(req.body.phone);
-      const otp = req.body.otp;
+      const { name, email, password, phone, otp } = req.body;
 
       // 1. Verify OTP
       const otpRecord = await OTP.findOne({ email });
       if (!otpRecord) {
         return res.status(400).json({ error: 'OTP has expired or is invalid. Please request a new one.' });
       }
+
       // The user submits a plain OTP. We need to compare it with the hashed OTP in the database.
       // bcrypt.compare handles this securely.
       // The first argument is the plain text, the second is the hash.
@@ -736,16 +726,14 @@ app.post('/api/register', validate(registerSchema),
 
 // Endpoint to send OTP for registration
 app.post('/api/send-otp', async (req, res) => {
-  // Sanitize email to prevent XSS and email injection
-  const email = xss(req.body.email || '').replace(/[\r\n]/g, '');
-  const type = req.body.type;
+  const { email, type } = req.body;
   
   if (!email || !type) {
     return res.status(400).json({ error: 'Email and type are required.' });
   }
 
   try {
-    // For registration, check if user already exists with the sanitized email
+    // For registration, check if user already exists
     if (type === 'register') {
       const existingUser = await User.findOne({ email });
       if (existingUser) {
@@ -860,7 +848,6 @@ app.post('/api/verify-email-change', authenticateToken, validate(verifyEmailChan
 // Zod schema for user login
 const loginSchema = z.object({
   body: z.object({
-    // Apply NoHTML validation to the email field as well
     email: z.string().email({ message: 'Invalid email address' }),
     password: z.string().min(1, { message: 'Password is required' })
   })
@@ -870,9 +857,7 @@ const loginSchema = z.object({
 app.post('/api/login', validate(loginSchema),
   async (req, res) => {
     try {
-      const { password } = req.body;
-      // Sanitize email to prevent XSS and email injection before using it in a query
-      const email = xss(req.body.email).replace(/[\r\n]/g, '');
+      const { email, password } = req.body;
 
       const user = await User.findOne({ email });
       if (!user) {
@@ -1185,13 +1170,12 @@ const sendNewOrderAdminNotification = async (order) => {
 // 1. Forgot Password - User requests a reset link
 app.post('/api/forgot-password', async (req, res) => {
   try {
-    // Sanitize email to prevent XSS and email injection
-    const email = xss(req.body.email || '').replace(/[\r\n]/g, '');
+    const { email } = req.body;
     const user = await User.findOne({ email });
 
     if (!user) {
-      // As requested, explicitly inform the user if the email is not registered.
-      return res.status(404).json({ error: 'User with this email is not registered.' });
+      // To prevent email enumeration, we send a success response even if the user doesn't exist.
+      return res.json({ message: 'If a user with that email exists, a password reset link has been sent.' });
     }
 
     // Generate a reset token
@@ -1693,9 +1677,9 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 // Zod schema for profile update
 const updateProfileSchema = z.object({
   body: z.object({
-    name: NoHTML.min(1, { message: 'Name is required' }),
+    name: z.string().trim().min(1, { message: 'Name is required' }),
     email: z.string().email({ message: 'Invalid email address' }),
-    phone: NoHTML.optional()
+    phone: z.string().trim().optional()
   })
 });
 
@@ -1703,21 +1687,16 @@ const updateProfileSchema = z.object({
 app.put('/api/profile', authenticateToken, csrfProtection, validate(updateProfileSchema),
   async (req, res) => {
     try {
-      // Sanitize all inputs to prevent XSS and Email Injection attacks
-      const name = xss(req.body.name).replace(/[\r\n]/g, '');
-      const email = xss(req.body.email).replace(/[\r\n]/g, '');
-      const phone = req.body.phone ? xss(req.body.phone).replace(/[\r\n]/g, '') : undefined;
+      const { name, email, phone } = req.body;
       
       const existingUser = await User.findOne({ email, _id: { $ne: req.user._id } });
       if (existingUser) {
         return res.status(400).json({ error: 'Email already in use' });
       }
 
-      const updateData = { name, email, phone };
-
       const user = await User.findByIdAndUpdate(
         req.user._id,
-        { $set: updateData },
+        { name, email, phone },
         { new: true }
       ).select('-password');
 
@@ -1765,37 +1744,24 @@ app.put('/api/change-password', authenticateToken, csrfProtection, validate(chan
 // Zod schema for adding an address
 const addAddressSchema = z.object({
   body: z.object({
-    name: NoHTML.min(1, { message: 'Name is required' }),
+    name: z.string().trim().min(1, { message: 'Name is required' }),
     mobileNumber: z.string().trim().min(10, { message: 'Mobile number must be at least 10 digits' }),
     alternateMobileNumber: z.string().trim().optional(),
     addressType: z.enum(['home', 'work']),
-    street: NoHTML.min(1, { message: 'Street/House No. is required' }),
-    city: NoHTML.min(1, { message: 'City/Town is required' }),
-    state: NoHTML.optional(),
-    zipCode: z.string().trim().length(6, { message: 'A 6-digit Pincode is required' }),
-    country: NoHTML.optional()
+    street: z.string().trim().min(1, { message: 'Street/House No. is required' }),
+    city: z.string().trim().min(1, { message: 'City/Town is required' }),
+    zipCode: z.string().trim().min(6, { message: 'A 6-digit Pincode is required' })
   })
 });
 
 // Add address
 app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddressSchema),
   async (req, res) => {
-    try {      
+    try {
+      const { name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country } = req.body;
+      
       const user = await User.findById(req.user._id);
-      // Sanitize all string inputs before saving
-      const newAddress = {
-        name: xss(req.body.name),
-        mobileNumber: xss(req.body.mobileNumber),
-        alternateMobileNumber: req.body.alternateMobileNumber ? xss(req.body.alternateMobileNumber) : undefined,
-        addressType: req.body.addressType,
-        street: xss(req.body.street),
-        city: xss(req.body.city),
-        state: req.body.state ? xss(req.body.state) : undefined,
-        zipCode: xss(req.body.zipCode),
-        country: req.body.country ? xss(req.body.country) : 'India'
-      };
-
-      user.addresses.push(newAddress);
+      user.addresses.push({ name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country: country || 'India' });
       await user.save();
 
       res.json({ message: 'Address added successfully' });
@@ -1810,18 +1776,7 @@ app.put('/api/addresses/:id', authenticateToken, csrfProtection, validate(addAdd
   async (req, res) => {
     try {
       const { id } = req.params;
-      // Sanitize all string inputs before updating
-      const updatedAddressData = {
-        name: xss(req.body.name),
-        mobileNumber: xss(req.body.mobileNumber),
-        alternateMobileNumber: req.body.alternateMobileNumber ? xss(req.body.alternateMobileNumber) : undefined,
-        addressType: req.body.addressType,
-        street: xss(req.body.street),
-        city: xss(req.body.city),
-        state: req.body.state ? xss(req.body.state) : undefined,
-        zipCode: xss(req.body.zipCode),
-        country: req.body.country ? xss(req.body.country) : 'India'
-      };
+      const updatedAddressData = req.body;
 
       const user = await User.findById(req.user._id);
       if (!user) {
@@ -1919,6 +1874,18 @@ const bannerSchema = new mongoose.Schema({
 });
 
 const Banner = mongoose.model('Banner', bannerSchema);
+
+// Contact Schema
+const contactSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  email: { type: String, required: true, lowercase: true },
+  subject: { type: String, required: true, trim: true },
+  message: { type: String, required: true, trim: true },
+  status: { type: String, enum: ['new', 'read', 'replied'], default: 'new' },
+  createdAt: { type: Date, default: Date.now }
+});
+
+const Contact = mongoose.model('Contact', contactSchema);
 
 // Admin - Get all products
 app.get('/api/admin/products', authenticateToken, adminAuth, async (req, res) => {
@@ -2224,26 +2191,14 @@ app.put('/api/admin/settings', authenticateToken, adminAuth, async (req, res) =>
   }
 });
 
-// Zod schema for adding/updating a product rating and review
-const ratingSchema = z.object({
-  body: z.object({
-    rating: z.number().min(1).max(5),
-    // Use the NoHTML validator and also allow an empty review
-    review: NoHTML.optional(),
-  }),
-  params: z.object({
-    id: z.string().refine((val) => mongoose.Types.ObjectId.isValid(val), { message: "Invalid product ID" }),
-  }),
-});
-
 // Add product rating
-app.post('/api/products/:id/rating', authenticateToken, csrfProtection, validate(ratingSchema), async (req, res) => {
+app.post('/api/products/:id/rating', authenticateToken, csrfProtection, async (req, res) => {
   try {
     const { rating, review } = req.body;
     const productId = req.params.id;
     
     const product = await Product.findById(productId);
-    if (!product) { // This check is technically redundant due to Zod validation, but good for clarity
+    if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
     
@@ -2253,13 +2208,13 @@ app.post('/api/products/:id/rating', authenticateToken, csrfProtection, validate
     if (existingRating) {
       // Update existing rating
       existingRating.rating = rating;
-      existingRating.review = xss(review || ''); // Sanitize before saving
+      existingRating.review = review;
     } else {
       // Add new rating
       product.ratings.push({
         userId: req.user._id,
         rating,
-        review: xss(review || '') // Sanitize before saving
+        review
       });
     }
     
@@ -2388,21 +2343,27 @@ app.delete('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, r
 // Zod schema for contact form
 const contactSchemaZod = z.object({
   body: z.object({
-    name: NoHTML.min(2, { message: 'Name must be at least 2 characters long' }),
+    name: z.string().trim().min(1, { message: 'Name is required' }),
     email: z.string().email({ message: 'Invalid email address' }),
-    subject: NoHTML.min(3, { message: 'Subject must be at least 3 characters long' }),
-    message: NoHTML.min(10, { message: 'Message must be at least 10 characters long' })
+    subject: z.string().trim().min(1, { message: 'Subject is required' }),
+    message: z.string().trim().min(10, { message: 'Message must be at least 10 characters long' })
   })
 });
 
 // Contact form submission
-app.post('/api/contact', contactLimiter, validate(contactSchemaZod),
+app.post('/api/contact', validate(contactSchemaZod),
   async (req, res) => {
-    // Sanitize all inputs to prevent XSS and Email Injection attacks
-    const name = xss(req.body.name).replace(/[\r\n]/g, '');
-    const email = xss(req.body.email).replace(/[\r\n]/g, '');
-    const subject = xss(req.body.subject).replace(/[\r\n]/g, '');
-    const message = xss(req.body.message); // Newlines are allowed in the message body
+    // Explicitly check for and reject any HTML tags in the raw input
+    const hasHTML = /<[^>]*>/;
+    if (hasHTML.test(req.body.name) || hasHTML.test(req.body.email) || hasHTML.test(req.body.subject) || hasHTML.test(req.body.message)) {
+      return res.status(400).json({ error: "HTML tags are not allowed in the contact form." });
+    }
+
+    // Sanitize all inputs to prevent XSS attacks
+    const name = xss(req.body.name);
+    const email = xss(req.body.email);
+    const subject = xss(req.body.subject);
+    const message = xss(req.body.message);
 
     // Ensure email service is configured before proceeding
     if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
@@ -2434,6 +2395,27 @@ app.post('/api/contact', contactLimiter, validate(contactSchemaZod),
     }
   }
 );
+
+// Admin - Get all contact messages
+app.get('/api/admin/contacts', authenticateToken, adminAuth, async (req, res) => {
+  try {
+    const contacts = await Contact.find().sort({ createdAt: -1 });
+    res.json(contacts);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch contact messages' });
+  }
+});
+
+// Admin - Update contact message status
+app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+  try {
+    const { status } = req.body;
+    await Contact.findByIdAndUpdate(req.params.id, { status });
+    res.json({ message: 'Status updated successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update status' });
+  }
+});
 
 // Create admin account (bypasses rate limiting)
 app.post('/api/create-admin', csrfProtection, async (req, res) => {
