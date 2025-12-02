@@ -2352,21 +2352,36 @@ const contactSchemaZod = z.object({
 // Contact form submission
 app.post('/api/contact', validate(contactSchemaZod),
   async (req, res) => {
+    const { name, email, subject, message } = req.body;
+
+    // Ensure email service is configured before proceeding
+    if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.error('Contact form submission failed: Email service is not configured on the server.');
+      return res.status(500).json({ error: 'Could not process your request at this time.' });
+    }
+
     try {
-      const { name, email, subject, message } = req.body;
-      
-      const contact = new Contact({
-        name,
-        email,
-        subject,
-        message
+      const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+
+      await emailTransporter.sendMail({
+        from: `"SamriddhiShop Contact Form" <${process.env.EMAIL_USER}>`,
+        to: adminEmail,
+        replyTo: email, // Set the user's email as the reply-to address
+        subject: `New Contact Form Submission: ${subject}`,
+        html: `
+          <p>You have received a new message from your website's contact form.</p>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Subject:</strong> ${subject}</p>
+          <p><strong>Message:</strong></p>
+          <p>${message.replace(/\n/g, '<br>')}</p>
+        `,
       });
-      
-      await contact.save();
-      
-      res.json({ message: 'Message sent successfully' });
+
+      res.json({ message: 'Thank you for your message. We will get back to you shortly.' });
     } catch (error) {
-      res.status(500).json({ error: 'Failed to send message' });
+      console.error('Failed to send contact form email:', error);
+      res.status(500).json({ error: 'Failed to send your message. Please try again later.' });
     }
   }
 );
