@@ -25,8 +25,6 @@ if (!process.env.JWT_SECRET) {
 // Assuming you have moved otp.js to backend/models/
 import OTP from './models/otp.js'; 
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -37,10 +35,7 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet({
   // 1. Configure a strong Content Security Policy (CSP)
-  // We let the _headers.yaml file handle the main CSP, but provide a fallback for API-only access.
-  // The settings here are more relaxed for API endpoints.
-  // In a Netlify proxy setup, the _headers.yaml CSP will typically override this one for browser requests.
-  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
+  contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "https://checkout.razorpay.com", "https://connect.facebook.net"],
@@ -61,35 +56,29 @@ app.use(helmet({
       requireTrustedTypesFor: ["'script'"], // Mitigate DOM-based XSS with Trusted Types
       upgradeInsecureRequests: [],
     },
-  } : false, // Disable CSP in development to avoid conflicts
-  // Disable headers that are already being set by Netlify's _headers.yaml to avoid duplication.
-  frameguard: false, // Disables X-Frame-Options
-  hsts: false, // Disables Strict-Transport-Security
-  noSniff: false, // Disables X-Content-Type-Options
+  },
+  // 2. Set a strong HSTS policy: 2 years, include subdomains, preload
+  strictTransportSecurity: {
+    maxAge: 63072000,
+    includeSubDomains: true,
+    preload: true,
+  },
   // 3. Isolate the origin
   crossOriginOpenerPolicy: { policy: "same-origin" },
 }));
 
 const whitelist = [
-  "http://localhost:5173",
-  "https://samriddhishop.in",
+ // Add this for Vite's default dev server
+  'https://samriddhishop.netlify.app',
   process.env.FRONTEND_URL,
-  "https://samriddhishop.netlify.app",
-  "https://samriddhishopproduction.netlify.app",
-  process.env.FRONTEND_URL
+  'https://samriddhishop.in',
+  'https://samriddhishopproduction.netlify.app',
 ];
 
 const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || whitelist.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS BLOCKED: " + origin));
-    }
-  },
-  credentials: true
+  origin: process.env.NODE_ENV === 'development' ? '*' : whitelist.filter(Boolean),
+  credentials: true,
 };
-
 app.use(cors(corsOptions));
 
 // Rate limiting (relaxed for better user experience)
@@ -146,6 +135,9 @@ const emailTransporter = nodemailer.createTransport({
     pass: process.env.EMAIL_PASS
   },
 });
+
+
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 // Schemas
 const cartItemSchema = new mongoose.Schema({
