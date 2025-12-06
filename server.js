@@ -2409,7 +2409,7 @@ app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, csrfPr
 // Create admin account (bypasses rate limiting)
 app.post('/api/create-admin', csrfProtection, async (req, res) => {
   try {
-    const adminEmail = 'admin@samriddhishop.com';
+    const adminEmail = ['admin@samriddhishop.com', 'support@samriddhishop.in'];
     const { password } = req.body;
     
     if (!password || password.length < 6) {
