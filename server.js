@@ -404,15 +404,10 @@ const adminAuth = (req, res, next) => {
     return res.status(401).json({ error: 'Authentication error: User not found on request.' });
   }
 
-  // Load multiple admin emails from .env (comma-separated)
-  const adminEmails = (process.env.ADMIN_EMAIL || '')
-    .split(',')
-    .map(email => email.trim().toLowerCase())
-    .filter(email => email.length > 0);
-
-  const userEmail = req.user.email.toLowerCase();
-  const isAdminByRole = req.user.role === 'admin';
-  const isAdminByEmail = adminEmails.includes(userEmail);
+  // Check if the user has the 'admin' role.
+  // For backward compatibility, also check the original ADMIN_EMAIL env variable.
+  const isAdminByRole = req.user.role === 'admin'; // From DB
+  const isAdminByEmail = process.env.ADMIN_EMAIL && req.user.email === process.env.ADMIN_EMAIL; // From ENV var
 
   if (!isAdminByRole && !isAdminByEmail) {
     // 2. Provide more detailed error for easier debugging in production.
