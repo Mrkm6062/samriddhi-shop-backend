@@ -633,7 +633,17 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
 // Get all products
 app.get('/api/products', async (req, res) => {
   try {
-    const products = await Product.find({ $or: [{ enabled: true }, { enabled: { $exists: false } }] }).sort({ createdAt: -1 });
+
+    // Prevent caching
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+
+    const products = await Product.find({
+      $or: [{ enabled: true }, { enabled: { $exists: false } }]
+    }).sort({ createdAt: -1 });
+
     res.json(products);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch products' });
