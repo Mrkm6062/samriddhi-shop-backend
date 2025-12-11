@@ -371,33 +371,33 @@ const authenticateToken = async (req, res, next) => {
 };
 
 
-// CSRF Protection
-const csrfTokens = new Map();
+// // CSRF Protection
+// const csrfTokens = new Map();
 
-const generateCSRFToken = () => {
-  return crypto.randomBytes(32).toString('hex');
-};
+// const generateCSRFToken = () => {
+//   return crypto.randomBytes(32).toString('hex');
+// };
 
-const csrfProtection = (req, res, next) => {
-  if (req.method === 'GET') return next();
+// const csrfProtection = (req, res, next) => {
+//   if (req.method === 'GET') return next();
   
-  const token = req.headers['x-csrf-token'];
-  const sessionId = req.headers['authorization'];
+//   const token = req.headers['x-csrf-token'];
+//   const sessionId = req.headers['authorization'];
   
-  if (!token || !csrfTokens.has(sessionId) || csrfTokens.get(sessionId) !== token) {
-    return res.status(403).json({ error: 'Invalid CSRF token' });
-  }
+//   if (!token || !csrfTokens.has(sessionId) || csrfTokens.get(sessionId) !== token) {
+//     return res.status(403).json({ error: 'Invalid CSRF token' });
+//   }
   
-  next();
-};
+//   next();
+// };
 
-// CSRF token endpoint (requires authentication)
-app.get('/api/csrf-token', authenticateToken, (req, res) => {
-  const token = generateCSRFToken();
-  const sessionId = req.headers['authorization'];
-  csrfTokens.set(sessionId, token);
-  res.json({ csrfToken: token });
-});
+// // CSRF token endpoint (requires authentication)
+// app.get('/api/csrf-token', authenticateToken, (req, res) => {
+//   const token = generateCSRFToken();
+//   const sessionId = req.headers['authorization'];
+//   csrfTokens.set(sessionId, token);
+//   res.json({ csrfToken: token });
+// });
 
 // Zod validation middleware
 const validate = (schema) => (req, res, next) => {
@@ -1509,7 +1509,7 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
 );
 
 // User-initiated order cancellation
-app.patch('/api/orders/:id/cancel', authenticateToken, csrfProtection, async (req, res) => {
+app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
 
@@ -1607,7 +1607,7 @@ const sendOrderCancellationAdminNotification = async (order, user) => {
 };
 
 // Endpoint to mark that refund details have been submitted
-app.patch('/api/orders/:id/refund-details-submitted', authenticateToken, csrfProtection, async (req, res) => {
+app.patch('/api/orders/:id/refund-details-submitted', authenticateToken, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
 
@@ -1785,7 +1785,7 @@ const updateProfileSchema = z.object({
 });
 
 // Update user profile
-app.put('/api/profile', authenticateToken, csrfProtection, validate(updateProfileSchema),
+app.put('/api/profile', authenticateToken, validate(updateProfileSchema),
   async (req, res) => {
     try {
       const { name, email, phone } = req.body;
@@ -1820,7 +1820,7 @@ const changePasswordSchema = z.object({
 });
 
 // Change password
-app.put('/api/change-password', authenticateToken, csrfProtection, validate(changePasswordSchema),
+app.put('/api/change-password', authenticateToken, validate(changePasswordSchema),
   async (req, res) => {
     try {
       const { currentPassword, newPassword } = req.body;
@@ -1856,7 +1856,7 @@ const addAddressSchema = z.object({
 });
 
 // Add address
-app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddressSchema),
+app.post('/api/addresses', authenticateToken, validate(addAddressSchema),
   async (req, res) => {
     try {
       const { name, mobileNumber, alternateMobileNumber, addressType, street, city, state, zipCode, country } = req.body;
@@ -1873,7 +1873,7 @@ app.post('/api/addresses', authenticateToken, csrfProtection, validate(addAddres
 );
 
 // Update address
-app.put('/api/addresses/:id', authenticateToken, csrfProtection, validate(addAddressSchema),
+app.put('/api/addresses/:id', authenticateToken, validate(addAddressSchema),
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -1899,7 +1899,7 @@ app.put('/api/addresses/:id', authenticateToken, csrfProtection, validate(addAdd
   }
 );
 // Delete address
-app.delete('/api/addresses/:id', authenticateToken, csrfProtection, async (req, res) => {
+app.delete('/api/addresses/:id', authenticateToken, async (req, res) => {
   try {
     await User.findByIdAndUpdate(
       req.user._id,
@@ -1999,7 +1999,7 @@ app.get('/api/admin/products', authenticateToken, adminAuth, async (req, res) =>
 });
 
 // Admin - Add product
-app.post('/api/admin/products', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) => {
   try {
     // Explicitly destructure fields from req.body for security and clarity
     const { name, description, price, originalPrice, discountPercentage, imageUrl, images, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled } = req.body;
@@ -2020,7 +2020,7 @@ app.post('/api/admin/products', authenticateToken, adminAuth, csrfProtection, as
 });
 
 // Admin - Update product
-app.put('/api/admin/products/:id', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.put('/api/admin/products/:id', authenticateToken, adminAuth, async (req, res) => {
   try {
     // For updates, it's also good practice to be explicit.
     // We can create an update object with all the fields from the body.
@@ -2037,7 +2037,7 @@ app.put('/api/admin/products/:id', authenticateToken, adminAuth, csrfProtection,
 });
 
 // Admin - Toggle product status
-app.patch('/api/admin/products/:id/toggle', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.patch('/api/admin/products/:id/toggle', authenticateToken, adminAuth, async (req, res) => {
   try {
     const { enabled } = req.body;
     const product = await Product.findByIdAndUpdate(req.params.id, { enabled }, { new: true });
@@ -2100,7 +2100,7 @@ app.get('/api/admin/users', authenticateToken, adminAuth, async (req, res) => {
 });
 
 // Admin - Create a new user (can be admin or user)
-app.post('/api/admin/users', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.post('/api/admin/users', authenticateToken, adminAuth, async (req, res) => {
   try {
     const { name, email, password, phone, role } = req.body;
 
@@ -2174,7 +2174,7 @@ app.get('/api/admin/coupons/report', authenticateToken, adminAuth, async (req, r
 });
 
 // Apply coupon
-app.post('/api/apply-coupon', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/apply-coupon', authenticateToken, async (req, res) => {
   try {
     const { code, total } = req.body;
     const coupon = await Coupon.findOne({ 
@@ -2293,7 +2293,7 @@ app.put('/api/admin/settings', authenticateToken, adminAuth, async (req, res) =>
 });
 
 // Add product rating
-app.post('/api/products/:id/rating', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/products/:id/rating', authenticateToken, async (req, res) => {
   try {
     const { rating, review } = req.body;
     const productId = req.params.id;
@@ -2345,7 +2345,7 @@ app.get('/api/banner', async (req, res) => {
 });
 
 // Admin - Update banner
-app.put('/api/admin/banner', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.put('/api/admin/banner', authenticateToken, adminAuth, async (req, res) => {
   try {
     const banner = await Banner.findOneAndUpdate(
       {}, // Find the first (and only) banner document
@@ -2497,7 +2497,7 @@ app.get('/api/admin/contacts', authenticateToken, adminAuth, async (req, res) =>
 });
 
 // Admin - Update contact message status
-app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, csrfProtection, async (req, res) => {
+app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, async (req, res) => {
   try {
     const { status } = req.body;
     await Contact.findByIdAndUpdate(req.params.id, { status });
@@ -2508,7 +2508,7 @@ app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, csrfPr
 });
 
 // Create admin account (bypasses rate limiting)
-app.post('/api/create-admin', csrfProtection, async (req, res) => {
+app.post('/api/create-admin', async (req, res) => {
   try {
     const adminEmail = ['admin@samriddhishop.com', 'support@samriddhishop.in'];
     const { password } = req.body;
@@ -2702,7 +2702,7 @@ app.patch('/api/notifications/:id/read', authenticateToken, async (req, res) => 
 });
 
 // Mark all notifications as read
-app.patch('/api/notifications/read-all', authenticateToken, csrfProtection, async (req, res) => {
+app.patch('/api/notifications/read-all', authenticateToken, async (req, res) => {
   try {
     await Notification.updateMany({ userId: req.user._id, read: false }, { $set: { read: true } });
     res.json({ message: 'All notifications marked as read' });
@@ -2712,7 +2712,7 @@ app.patch('/api/notifications/read-all', authenticateToken, csrfProtection, asyn
 });
 
 // Soft-delete all notifications for a user
-app.delete('/api/notifications/clear-all', authenticateToken, csrfProtection, async (req, res) => {
+app.delete('/api/notifications/clear-all', authenticateToken, async (req, res) => {
   try {
     // To handle potential data inconsistencies where userId might be stored as a string,
     // we query for both ObjectId and its string representation.
