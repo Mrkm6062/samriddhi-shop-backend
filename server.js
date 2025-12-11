@@ -962,9 +962,8 @@ app.post("/api/logout", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Logout failed" });
   }
 });
-
 // Add item to cart (for logged-in users)
-app.post('/api/cart/add', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/cart/add', authenticateToken, async (req, res) => {
   try {
     const { productId, quantity = 1 } = req.body;
     
@@ -2394,7 +2393,7 @@ app.post('/api/cart', authenticateToken, csrfProtection, async (req, res) => {
 });
 
 // Add to wishlist
-app.post('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/wishlist/:id', authenticateToken, async (req, res) => {
   try {
     const productId = req.params.id;
     const user = await User.findById(req.user._id);
@@ -2413,7 +2412,7 @@ app.post('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, res
 });
 
 // Remove from wishlist
-app.delete('/api/wishlist/:id', authenticateToken, csrfProtection, async (req, res) => {
+app.delete('/api/wishlist/:id', authenticateToken, async (req, res) => {
   try {
     const productId = req.params.id;
     const user = await User.findById(req.user._id);
