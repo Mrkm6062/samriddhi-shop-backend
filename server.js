@@ -962,19 +962,34 @@ app.post("/api/logout", authenticateToken, async (req, res) => {
     res.status(500).json({ error: "Logout failed" });
   }
 });
+
 // Add item to cart (for logged-in users)
 app.post('/api/cart/add', authenticateToken, async (req, res) => {
   try {
     const { productId, quantity = 1 } = req.body;
-    
+
     const product = await Product.findById(productId);
     if (!product) {
       return res.status(404).json({ error: 'Product not found' });
     }
 
-    // In a real app, you'd store cart in database
-    // For simplicity, we're just validating the product exists
-    res.json({ message: 'Item added to cart', product });
+    const user = req.user;
+
+    const existingItem = user.cart.find(item =>
+      item.productId.toString() === productId
+    );
+
+    if (existingItem) {
+      existingItem.quantity += Number(quantity);
+    } else {
+      user.cart.push({ productId, quantity: Number(quantity) });
+    }
+
+    await user.save();
+    await user.populate('cart.productId');
+
+    res.json({ message: 'Item added to cart', cart: user.cart });
+
   } catch (error) {
     res.status(500).json({ error: 'Failed to add item to cart' });
   }
@@ -2356,7 +2371,6 @@ app.get('/api/wishlist', authenticateToken, async (req, res) => {
   }
 });
 
-// Get user's cart
 app.get('/api/cart', authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.user._id).populate('cart.productId');
