@@ -2371,7 +2371,7 @@ app.get('/api/cart', authenticateToken, async (req, res) => {
 });
 
 // Update user's cart
-app.post('/api/cart', authenticateToken, csrfProtection, async (req, res) => {
+app.post('/api/cart', authenticateToken, async (req, res) => {
   try {
     const { cart: cartData } = req.body;
     if (!Array.isArray(cartData)) {
