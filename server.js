@@ -143,8 +143,10 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true, minlength: 6 },
   phone: { type: String, trim: true },
+
   wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
   cart: { type: [cartItemSchema], default: [] },
+
   pushSubscriptions: [{
     endpoint: String,
     keys: {
@@ -152,7 +154,8 @@ const userSchema = new mongoose.Schema({
       auth: String
     }
   }],
-    addresses: [{
+
+  addresses: [{
     name: { type: String },
     mobileNumber: { type: String },
     alternateMobileNumber: { type: String },
@@ -164,13 +167,21 @@ const userSchema = new mongoose.Schema({
     country: { type: String, default: 'India' },
     createdAt: { type: Date, default: Date.now }
   }],
+
   createdAt: { type: Date, default: Date.now },
+
   passwordResetToken: String,
   passwordResetExpires: Date,
-  isEmailVerified: { type: Boolean, default: false }, // New field for email verification status
-  role: { type: String, enum: ['user', 'admin'], default: 'user' }, // Add role field
+
+  isEmailVerified: { type: Boolean, default: false },
+
+  role: { type: String, enum: ['user', 'admin'], default: 'user' },
+
+  // 🔥 Added for secure session management
+  sessionVersion: { type: Number, default: 0 }
 });
 
+// Hash password if modified
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   this.password = await bcrypt.hash(this.password, 12);
@@ -322,7 +333,7 @@ const stateDistrictMapSchema = new mongoose.Schema({
 });
 const StateDistrictMap = mongoose.model('StateDistrictMap', stateDistrictMapSchema);
 
-// JWT Authentication middleware
+// SECURE JWT Authentication middleware
 const authenticateToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -333,16 +344,32 @@ const authenticateToken = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // 🔥 1. Token MUST be login type (blocks reset-password tokens)
+    if (decoded.type !== "login") {
+      return res.status(401).json({ error: "Invalid token type" });
+    }
+
+    // 🔥 2. Validate user exists
     const user = await User.findById(decoded.userId).select('-password');
     if (!user) {
-      return res.status(401).json({ error: 'Invalid token' });
+      return res.status(401).json({ error: 'Invalid token user not found' });
     }
+
+    // 🔥 3. Validate sessionVersion to block copied/old tokens
+    if (decoded.sessionVersion !== user.sessionVersion) {
+      return res.status(401).json({ error: 'Session expired. Please login again.' });
+    }
+
+    // Authenticated user stored in request
     req.user = user;
     next();
+
   } catch (error) {
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };
+
 
 // CSRF Protection
 const csrfTokens = new Map();
@@ -396,29 +423,29 @@ const validate = (schema) => (req, res, next) => {
   }
 };
 
-// Admin middleware
+// SECURE Admin middleware
 const adminAuth = (req, res, next) => {
-  // 1. First, ensure a user object exists on the request.
-  if (!req.user || !req.user.email) {
-    // This indicates a problem with the preceding authenticateToken middleware.
-    return res.status(401).json({ error: 'Authentication error: User not found on request.' });
+  // 1. Ensure authentication middleware has attached the user
+  if (!req.user || !req.user.role) {
+    return res.status(401).json({ error: 'User not authenticated' });
   }
 
-  // Check if the user has the 'admin' role.
-  // For backward compatibility, also check the original ADMIN_EMAIL env variable.
-  const isAdminByRole = req.user.role === 'admin'; // From DB
-  const isAdminByEmail = process.env.ADMIN_EMAIL && req.user.email === process.env.ADMIN_EMAIL; // From ENV var
+  // 2. Strict role-based admin check
+  const isAdmin = req.user.role === 'admin';
 
-  if (!isAdminByRole && !isAdminByEmail) {
-    // 2. Provide more detailed error for easier debugging in production.
-    console.log(`Admin access denied for user: ${req.user.email}. Role: '${req.user.role}', ADMIN_EMAIL configured: ${!!process.env.ADMIN_EMAIL}`);
-    return res.status(403).json({ 
-      error: 'Admin access required.',
-      // You might want to remove these details in a final production version for security,
-      // but they are very helpful for debugging now.
-      details: `Access denied. User role is '${req.user.role || 'undefined'}'.`
+  // (Optional) backward compatibility using ADMIN_EMAIL
+  const isAdminByEmail =
+    process.env.ADMIN_EMAIL &&
+    req.user.email &&
+    req.user.email.toLowerCase() === process.env.ADMIN_EMAIL.toLowerCase();
+
+  if (!isAdmin && !isAdminByEmail) {
+    return res.status(403).json({
+      error: 'Admin access required'
     });
   }
+
+  // 3. Allow admin access
   next();
 };
 
@@ -862,38 +889,79 @@ const loginSchema = z.object({
   })
 });
 
-// User login
-app.post('/api/login', validate(loginSchema),
-  async (req, res) => {
-    try {
-      const { email, password } = req.body;
+// User login (SECURE VERSION)
+app.post('/api/login', validate(loginSchema), async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-      const user = await User.findOne({ email });
-      if (!user) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-
-      const isValidPassword = await bcrypt.compare(password, user.password);
-      if (!isValidPassword) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
-
-      const token = jwt.sign(
-        { userId: user._id, role: user.role }, // Add role to JWT payload
-        process.env.JWT_SECRET,
-        { expiresIn: '7d' }
-      );
-
-      res.json({
-        message: 'Login successful',
-        token,
-        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, isEmailVerified: user.isEmailVerified, role: user.role } // Add role to user object in response
+    // 🔒 If user already has a token in request header → force logout first
+    const existingToken = req.headers['authorization'];
+    if (existingToken) {
+      return res.status(400).json({
+        error: 'You are already logged in. Please logout first.'
       });
-    } catch (error) {
-      res.status(500).json({ error: 'Login failed' });
     }
+
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Check password
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // 🔥 Increase sessionVersion so ALL old tokens become invalid immediately
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+    await user.save();
+
+    // Generate secure login JWT
+    const token = jwt.sign(
+      { 
+        userId: user._id,
+        role: user.role,
+        sessionVersion: user.sessionVersion,
+        type: "login"   // prevents reset-token abuse
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    // Response
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        isEmailVerified: user.isEmailVerified,
+        role: user.role
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Login failed' });
   }
-);
+});
+
+app.post("/api/logout", authenticateToken, async (req, res) => {
+  try {
+    // 🔥 Increase sessionVersion to invalidate all tokens immediately
+    req.user.sessionVersion += 1;
+    await req.user.save();
+
+    res.json({ message: "Logged out successfully" });
+
+  } catch (error) {
+    res.status(500).json({ error: "Logout failed" });
+  }
+});
 
 // Add item to cart (for logged-in users)
 app.post('/api/cart/add', authenticateToken, csrfProtection, async (req, res) => {
@@ -1176,33 +1244,31 @@ const sendNewOrderAdminNotification = async (order) => {
 
 // --- Password Reset Routes ---
 
-// 1. Forgot Password - User requests a reset link
+// --- Forgot Password ---
 app.post('/api/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
     const user = await User.findOne({ email });
 
+    // Do NOT reveal if user exists
     if (!user) {
-      // To prevent email enumeration, we send a success response even if the user doesn't exist.
       return res.json({ message: 'If a user with that email exists, a password reset link has been sent.' });
     }
 
-    // Generate a reset token
+    // Generate secure reset token
     const resetToken = crypto.randomBytes(32).toString('hex');
     user.passwordResetToken = crypto.createHash('sha256').update(resetToken).digest('hex');
-    user.passwordResetExpires = Date.now() + 10 * 60 * 1000; // Token expires in 10 minutes
+    user.passwordResetExpires = Date.now() + 5 * 60 * 1000; // 5 minutes
 
     await user.save();
 
-    // Check for email configuration before attempting to send
+    // Email config check
     if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      console.error('FATAL: Email service is not configured. Please set EMAIL_HOST, EMAIL_USER, and EMAIL_PASS environment variables.');
       return res.status(500).json({ error: 'Email service is not configured on the server.' });
     }
 
-    // Send the email
     const resetUrl = `${FRONTEND_URL}/reset-password/${resetToken}`;
-    const message = `You are receiving this email because you (or someone else) have requested the reset of a password. Please click on the following link, or paste this into your browser to complete the process:\n\n${resetUrl}\n\nIf you did not request this, please ignore this email and your password will remain unchanged.`;
+    const message = `Click to reset your password:\n\n${resetUrl}\n\nIf not requested, please ignore.`;
 
     await emailTransporter.sendMail({
       from: `"SamriddhiShop Support" <${process.env.EMAIL_USER}>`,
@@ -1219,27 +1285,39 @@ app.post('/api/forgot-password', async (req, res) => {
   }
 });
 
-// 2. Reset Password - User submits a new password
+// --- Reset Password ---
 app.post('/api/reset-password/:token', async (req, res) => {
   try {
-    const hashedToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
+    const hashedToken = crypto
+      .createHash('sha256')
+      .update(req.params.token)
+      .digest('hex');
 
     const user = await User.findOne({
       passwordResetToken: hashedToken,
-      passwordResetExpires: { $gt: Date.now() },
+      passwordResetExpires: { $gt: Date.now() }
     });
 
     if (!user) {
       return res.status(400).json({ error: 'Password reset token is invalid or has expired.' });
     }
 
+    // 🔒 Update password (ensure hashing via pre-save hook)
     user.password = req.body.password;
+
+    // 🔥 Invalidate old tokens by bumping sessionVersion
+    user.sessionVersion = (user.sessionVersion || 0) + 1;
+
+    // Remove reset token
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
+
     await user.save();
 
-    res.json({ message: 'Password has been reset successfully.' });
+    res.json({ message: 'Password has been reset successfully. Please login again.' });
+
   } catch (error) {
+    console.error(error);
     res.status(500).json({ error: 'Failed to reset password.' });
   }
 });
