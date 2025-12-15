@@ -112,7 +112,7 @@ const razorpay = new Razorpay({
 
 // VAPID keys for web-push
 webpush.setVapidDetails(
-  'mailto:support@samriddhishop.com',
+  'mailto:support@samriddhishop.in',
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 );
@@ -1409,8 +1409,9 @@ app.patch('/api/orders/:id/status', authenticateToken, validate(updateOrderStatu
       }
 
       // Allow admin or order owner to update status
+      const isAdmin = req.user.role === 'admin';
       const adminEmail = process.env.ADMIN_EMAIL || 'admin@samriddhishop.com';
-      if (req.user.email !== adminEmail && order.userId.toString() !== req.user._id.toString()) {
+      if (!isAdmin && req.user.email !== adminEmail && order.userId.toString() !== req.user._id.toString()) {
         return res.status(403).json({ error: 'Access denied' });
       }
 
