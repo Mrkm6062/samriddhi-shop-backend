@@ -100,7 +100,8 @@ const authLimiter = rateLimit({
   message: 'Too many authentication attempts, please try again later.'
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/samriddhishop', {
@@ -114,7 +115,10 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+});
 
 // VAPID keys for web-push
 webpush.setVapidDetails(
@@ -2800,8 +2804,16 @@ app.delete('/api/notifications/clear-all', authenticateToken, async (req, res) =
 
 // Error handling middleware
 app.use((error, req, res, next) => {
+  // Handle Multer errors specifically
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'File is too large. Maximum size is 10MB.' });
+    }
+    return res.status(400).json({ error: `File upload error: ${error.message}` });
+  }
+
   console.error(error);
-  res.status(500).json({ error: 'Internal server error' });
+  res.status(500).json({ error: 'Internal server error', details: error.message });
 });
 
 // 404 handler
