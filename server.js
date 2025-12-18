@@ -67,6 +67,7 @@ app.use(helmet({
   },
   // 3. Isolate the origin
   crossOriginOpenerPolicy: { policy: "same-origin" },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
 }));
 
 const whitelist = [
@@ -2032,6 +2033,11 @@ app.post('/api/admin/upload-image', authenticateToken, adminAuth, upload.single(
       return res.status(400).json({ error: 'No image file provided' });
     }
 
+    if (!process.env.GCS_BUCKET) {
+      console.error('GCS_BUCKET environment variable is missing');
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
     const fileName = `products/${Date.now()}_${req.file.originalname}`;
     const bucket = storage.bucket(process.env.GCS_BUCKET);
     const blob = bucket.file(fileName);
@@ -2039,6 +2045,11 @@ app.post('/api/admin/upload-image', authenticateToken, adminAuth, upload.single(
     const stream = blob.createWriteStream({
       resumable: false,
       contentType: req.file.mimetype
+    });
+
+    stream.on('error', (err) => {
+      console.error('GCS Stream Error:', err);
+      res.status(500).json({ error: 'Upload to storage failed' });
     });
 
     stream.on('finish', () => {
