@@ -11,6 +11,9 @@ import Razorpay from 'razorpay';
 import { z } from 'zod';
 import webpush from 'web-push';
 import nodemailer from 'nodemailer';
+import multer from 'multer';
+import path from 'path';
+import { storage } from './gcs.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -110,6 +113,8 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
+const upload = multer({ storage: multer.memoryStorage() });
+
 // VAPID keys for web-push
 webpush.setVapidDetails(
   'mailto:support@samriddhishop.in',
@@ -197,8 +202,8 @@ const productSchema = new mongoose.Schema({
   price: { type: Number, required: true, min: 0 },
   originalPrice: { type: Number },
   discountPercentage: { type: Number, default: 0, min: 0, max: 100 },
-  imageUrl: { type: String, required: true },
-  images: [{ type: String }],
+  imagePath: { type: String, required: true },
+  imagePaths: [{ type: String }],
   category: { type: String, required: true },
   soldBy: { type: String, trim: true }, // To store the wholesaler/seller name
   stock: { type: Number, default: 0, min: 0 },
@@ -2003,10 +2008,10 @@ app.get('/api/admin/products', authenticateToken, adminAuth, async (req, res) =>
 app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) => {
   try {
     // Explicitly destructure fields from req.body for security and clarity
-    const { name, description, price, originalPrice, discountPercentage, imageUrl, images, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled } = req.body;
+    const { name, description, price, originalPrice, discountPercentage, imagePath, imagePaths, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled } = req.body;
 
     const product = new Product({
-      name, description, price, originalPrice, discountPercentage, imageUrl, images, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled
+      name, description, price, originalPrice, discountPercentage, imagePath, imagePaths, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled
     });
 
     await product.save();
@@ -2017,6 +2022,50 @@ app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) =
     console.error('Error adding product:', error); 
     // Send a more descriptive error to the client
     res.status(500).json({ error: 'Failed to add product. Please check all fields.', details: error.message });
+  }
+});
+
+// Admin - Upload Image to GCS
+app.post('/api/admin/upload-image', authenticateToken, adminAuth, upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file provided' });
+    }
+
+    const fileName = `products/${Date.now()}_${req.file.originalname}`;
+    const bucket = storage.bucket(process.env.GCS_BUCKET);
+    const blob = bucket.file(fileName);
+
+    const stream = blob.createWriteStream({
+      resumable: false,
+      contentType: req.file.mimetype
+    });
+
+    stream.on('finish', () => {
+      res.json({ path: fileName }); // SAVE THIS IN DB
+    });
+
+    stream.end(req.file.buffer);
+  } catch (err) {
+    console.error('Upload failed:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
+
+app.get('/api/image/:path(*)', async (req, res) => {
+  try {
+    const filePath = req.params.path;
+    const [url] = await storage
+      .bucket(process.env.GCS_BUCKET)
+      .file(filePath)
+      .getSignedUrl({
+        version: 'v4',
+        action: 'read',
+        expires: Date.now() + 10 * 60 * 1000 // 10 minutes
+      });
+    res.redirect(url);
+  } catch (err) {
+    res.status(404).send('Image not found');
   }
 });
 
