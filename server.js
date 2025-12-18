@@ -2035,10 +2035,13 @@ app.post('/api/admin/upload-image', authenticateToken, adminAuth, upload.single(
 
     if (!process.env.GCS_BUCKET) {
       console.error('GCS_BUCKET environment variable is missing');
-      return res.status(500).json({ error: 'Server configuration error' });
+      return res.status(500).json({ error: 'Server configuration error: GCS_BUCKET missing' });
     }
 
-    const fileName = `products/${Date.now()}_${req.file.originalname}`;
+    // Sanitize filename to prevent issues with special characters
+    const sanitizedOriginalName = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const fileName = `products/${Date.now()}_${sanitizedOriginalName}`;
+    
     const bucket = storage.bucket(process.env.GCS_BUCKET);
     const blob = bucket.file(fileName);
 
@@ -2049,17 +2052,23 @@ app.post('/api/admin/upload-image', authenticateToken, adminAuth, upload.single(
 
     stream.on('error', (err) => {
       console.error('GCS Stream Error:', err);
-      res.status(500).json({ error: 'Upload to storage failed' });
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Upload to storage failed', details: err.message });
+      }
     });
 
     stream.on('finish', () => {
-      res.json({ path: fileName }); // SAVE THIS IN DB
+      if (!res.headersSent) {
+        res.json({ path: fileName }); // SAVE THIS IN DB
+      }
     });
 
     stream.end(req.file.buffer);
   } catch (err) {
     console.error('Upload failed:', err);
-    res.status(500).json({ error: 'Upload failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Upload failed', details: err.message });
+    }
   }
 });
 
