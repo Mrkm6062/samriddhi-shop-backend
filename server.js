@@ -2015,6 +2015,11 @@ app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) =
     // Explicitly destructure fields from req.body for security and clarity
     const { name, description, price, originalPrice, discountPercentage, imagePath, imagePaths, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled } = req.body;
 
+    // Basic validation
+    if (!imagePath) {
+      return res.status(400).json({ error: 'Main product image is required. Please upload an image.' });
+    }
+
     const product = new Product({
       name, description, price, originalPrice, discountPercentage, imagePath, imagePaths, category, soldBy, stock, variants, highlights, specifications, warranty, showHighlights, showSpecifications, showWarranty, enabled
     });
@@ -2025,6 +2030,12 @@ app.post('/api/admin/products', authenticateToken, adminAuth, async (req, res) =
   } catch (error) {
     // Log the detailed error on the server for debugging
     console.error('Error adding product:', error); 
+    
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(val => val.message);
+      return res.status(400).json({ error: 'Validation failed', details: messages.join(', ') });
+    }
+
     // Send a more descriptive error to the client
     res.status(500).json({ error: 'Failed to add product. Please check all fields.', details: error.message });
   }
