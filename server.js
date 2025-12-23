@@ -103,11 +103,89 @@ const authLimiter = rateLimit({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// MongoDB connection
+// MongoDB connections
+
+// Default connection for the e-commerce shop.
+// All Mongoose models defined in this file (User, Product, etc.) will automatically use this connection.
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/samriddhishop', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
+const mainDb = mongoose.connection;
+mainDb.on('error', console.error.bind(console, 'E-commerce DB connection error:'));
+mainDb.once('open', () => console.log('Connected to e-commerce database (shopdb).'));
+
+// Additional connection for the blog database.
+const blogDbConnection = mongoose.createConnection(process.env.MONGODB_BLOG_URI || 'mongodb://localhost:27017/samriddhiblogdb', {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+});
+blogDbConnection.on('error', console.error.bind(console, 'Blog DB connection error:'));
+blogDbConnection.once('open', () => console.log('Connected to blog database (samriddhiblogdb).'));
+
+// Blog Post Schema (using the separate blog connection)
+const postSchema = new mongoose.Schema({
+  title: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  slug: {
+    type: String,
+    unique: true,
+    index: true,
+  },
+  author: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  },
+  date: {
+    type: String,
+    required: true,
+  },
+  content: {
+    type: String,
+    required: true,
+  },
+  thumbnailUrl: {
+    type: String,
+    default: '',
+  },
+  thumbnailAltText: { // New field for thumbnail alt text
+    type: String,
+    default: '',
+    trim: true,
+  },
+  metaDescription: { // New field for meta description
+    type: String,
+    default: '',
+    trim: true,
+    maxlength: 160, // Common max length for meta descriptions
+  },
+  category: {
+    type: String,
+    enum: ['Fitness', 'Health', 'Travel', 'Fashion', 'Other'],
+    default: 'Other',
+    required: true,
+  },
+  likes: [{ // Array to store user IDs who liked the post (authenticated users)
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  anonymousLikeCount: { // New: Counter for likes from unauthenticated users
+    type: Number,
+    default: 0,
+  },
+}, {
+  timestamps: true,
+});
+const Post = blogDbConnection.model('Post', postSchema);
 
 // Razorpay instance
 const razorpay = new Razorpay({
@@ -666,6 +744,54 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
 };
 
 // API Routes
+
+// Get blog posts
+app.get('/api/posts', async (req, res) => {
+  try {
+    const { category, search, page = 1, limit = 4, sortBy = 'createdAt', sortOrder = 'desc', slug } = req.query;
+    let filter = {};
+    let sort = {};
+
+    if (category && category !== 'All') {
+      filter.category = category;
+    }
+
+    if (slug) {
+      filter.slug = slug;
+    }
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      filter.$or = [
+        { title: { $regex: searchRegex } },
+        { author: { $regex: searchRegex } },
+        { content: { $regex: searchRegex } },
+        { slug: { $regex: searchRegex } },
+        { metaDescription: { $regex: searchRegex } }
+      ];
+    }
+
+    if (sortBy) {
+      sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const postsQuery = Post.find(filter)
+                            .sort(sort)
+                            .skip(skip)
+                            .limit(parseInt(limit));
+
+    const [posts, totalPosts] = await Promise.all([
+      postsQuery.exec(),
+      Post.countDocuments(filter)
+    ]);
+
+    res.json({ posts, totalPosts });
+  } catch (err) {
+    console.error('Error fetching posts:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
 // Get all products
 app.get('/api/products', async (req, res) => {
