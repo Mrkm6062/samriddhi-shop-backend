@@ -2503,6 +2503,41 @@ app.put('/api/admin/settings', authenticateToken, adminAuth, async (req, res) =>
   }
 });
 
+// Check if user can review a product
+app.get('/api/products/:id/can-review', authenticateToken, async (req, res) => {
+  try {
+    const productId = req.params.id;
+    const userId = req.user._id;
+
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ error: 'Product not found' });
+    }
+
+    // Check if already reviewed
+    const hasReviewed = product.ratings.some(r => r.userId.toString() === userId.toString());
+    if (hasReviewed) {
+      return res.json({ canReview: false, reason: 'already_reviewed' });
+    }
+
+    // Check if user bought the product and it was delivered
+    const hasBought = await Order.findOne({
+      userId: userId,
+      status: 'delivered',
+      'items.productId': productId
+    });
+
+    if (!hasBought) {
+      return res.json({ canReview: false, reason: 'not_purchased_or_delivered' });
+    }
+
+    res.json({ canReview: true });
+  } catch (error) {
+    console.error('Error checking review eligibility:', error);
+    res.status(500).json({ error: 'Failed to check review eligibility' });
+  }
+});
+
 // Add product rating
 app.post('/api/products/:id/rating', authenticateToken, async (req, res) => {
   try {
