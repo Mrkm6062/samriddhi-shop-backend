@@ -76,6 +76,8 @@ const whitelist = [
   'https://samriddhishop.netlify.app',
   process.env.FRONTEND_URL,
   'https://samriddhishop.in',
+  'https://www.samriddhishop.in',
+  'https://samriddhishop.info',
   'https://samriddhishopproduction.netlify.app',
 ];
 
