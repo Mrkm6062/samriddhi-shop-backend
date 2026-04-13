@@ -200,7 +200,7 @@ const upload = multer({
 
 // VAPID keys for web-push
 webpush.setVapidDetails(
-  'mailto:support@samriddhishop.in',
+  'mailto:samriddhishop4@gmail.com',
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 );
@@ -585,7 +585,7 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
                 <p style="text-align:center; margin-top:20px;">
                   <a href="${orderLink}" style="background-color:#4CAF50; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">Track My Order</a>
                 </p>
-                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">samriddhishop4@gmail.com</a>.</p>
               </td>
             </tr>
             <tr>
@@ -622,7 +622,7 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
                 <p style="text-align:center; margin-top:20px;">
                   <a href="${orderLink}" style="background-color:#FFC107; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">Track My Order</a>
                 </p>
-                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">samriddhishop4@gmail.com</a>.</p>
               </td>
             </tr>
             <tr>
@@ -657,7 +657,7 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
                 <p style="text-align:center; margin-top:20px;">
                   <a href="${orderLink}" style="background-color:#28A745; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View My Order</a>
                 </p>
-                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.com" style="color:#4CAF50; text-decoration:none;">samriddhishop4@gmail.com</a>.</p>
               </td>
             </tr>
             <tr>
@@ -718,7 +718,7 @@ const sendOrderStatusEmail = async (userEmail, userName, order) => {
                 <p style="text-align:center; margin-top:20px;">
                   <a href="${orderLink}" style="background-color:#007BFF; color:#ffffff; text-decoration:none; padding:12px 24px; border-radius:5px; font-weight:bold; display: inline-block;">View Order Details</a>
                 </p>
-                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:support@samriddhishop.in" style="color:#4CAF50; text-decoration:none;">support@samriddhishop.in</a>.</p>
+                <p style="font-size:14px; color:#888; margin-top:30px;">If you have any questions, reply to this email or contact our support team at <a href="mailto:samriddhishop4@gmail.com" style="color:#4CAF50; text-decoration:none;">samriddhishop4@gmail.com</a>.</p>
               </td>
             </tr>
             <tr>
@@ -1289,7 +1289,7 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
 
 // --- Admin New Order Notification ---
 const sendNewOrderAdminNotification = async (order) => {
-	const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+	const adminEmail = process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
 	const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
 	const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
 
@@ -1691,7 +1691,7 @@ app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
 
 // --- Admin Order Cancellation Notification ---
 const sendOrderCancellationAdminNotification = async (order, user) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+  const adminEmail = process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
   const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
   const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
 
@@ -2673,7 +2673,7 @@ app.post('/api/contact', validate(contactSchemaZod),
     }
 
     try {
-      const adminEmail = process.env.ADMIN_EMAIL || 'support@samriddhishop.in';
+      const adminEmail = process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
 
       await emailTransporter.sendMail({
         from: `"SamriddhiShop Contact Form" <${process.env.EMAIL_USER}>`,
@@ -2721,7 +2721,7 @@ app.patch('/api/admin/contacts/:id/status', authenticateToken, adminAuth, async 
 // Create admin account (bypasses rate limiting)
 app.post('/api/create-admin', async (req, res) => {
   try {
-    const adminEmail = ['admin@samriddhishop.com', 'support@samriddhishop.in'];
+    const adminEmail = ['admin@samriddhishop.com', 'samriddhishop4@gmail.com'];
     const { password } = req.body;
     
     if (!password || password.length < 6) {
