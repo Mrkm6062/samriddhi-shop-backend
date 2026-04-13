@@ -195,7 +195,7 @@ const razorpay = new Razorpay({
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit to allow video uploads
 });
 
 // VAPID keys for web-push
@@ -2979,7 +2979,7 @@ app.use((error, req, res, next) => {
   // Handle Multer errors specifically
   if (error instanceof multer.MulterError) {
     if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ error: 'File is too large. Maximum size is 10MB.' });
+      return res.status(413).json({ error: 'File is too large. Maximum size is 50MB.' });
     }
     return res.status(400).json({ error: `File upload error: ${error.message}` });
   }
