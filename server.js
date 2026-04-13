@@ -2585,6 +2585,12 @@ app.post('/api/products/:id/rating', authenticateToken, async (req, res) => {
 // Get banner settings
 app.get('/api/banner', async (req, res) => {
   try {
+    // Prevent caching
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+
     const banner = await Banner.findOne({ isActive: true }) || new Banner();
     res.json(banner);
   } catch (error) {
