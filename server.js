@@ -2606,8 +2606,8 @@ app.put('/api/admin/banner', authenticateToken, adminAuth, async (req, res) => {
 
     const banner = await Banner.findOneAndUpdate(
       {}, // Find the first (and only) banner document
-      { $set: updateData, updatedAt: new Date(), $setOnInsert: { isActive: true } },
-      { upsert: true, new: true }
+      { $set: { ...updateData, updatedAt: new Date() } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     res.json({ message: 'Banner updated successfully', banner });
   } catch (error) {
