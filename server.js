@@ -1291,7 +1291,8 @@ app.post('/api/checkout', authenticateToken, validate(checkoutSchema),
 
 // --- Admin New Order Notification ---
 const sendNewOrderAdminNotification = async (order) => {
-	const adminEmail = process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
+	const settings = await Settings.findOne({});
+	const adminEmail = settings?.email || process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
 	const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
 	const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
 
@@ -1693,7 +1694,8 @@ app.patch('/api/orders/:id/cancel', authenticateToken, async (req, res) => {
 
 // --- Admin Order Cancellation Notification ---
 const sendOrderCancellationAdminNotification = async (order, user) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
+  const settings = await Settings.findOne({});
+  const adminEmail = settings?.email || process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
   const orderIdentifier = order.orderNumber || order._id.toString().slice(-8);
   const adminOrderLink = `${FRONTEND_URL}/admin/orders`;
 
@@ -2720,7 +2722,13 @@ app.post('/api/contact', validate(contactSchemaZod),
     }
 
     try {
-      const adminEmail = process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
+      // Fetch the email configured in the Admin Settings
+      const settings = await Settings.findOne({});
+      const adminEmail = settings?.email || process.env.ADMIN_EMAIL || 'samriddhishop4@gmail.com';
+
+      // Save the message to the database so it appears in the Admin Panel -> Messages
+      const newContact = new Contact({ name, email, subject, message });
+      await newContact.save();
 
       await emailTransporter.sendMail({
         from: `"SamriddhiShop Contact Form" <${process.env.EMAIL_USER}>`,
