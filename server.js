@@ -2380,7 +2380,7 @@ app.get('/api/admin/coupons/report', authenticateToken, adminAuth, async (req, r
   try {
     const coupons = await Coupon.find()
       .populate('usedBy.userId', 'name email')
-      .populate('usedBy.orderId', 'orderNumber total')
+      .populate('usedBy.orderId', 'orderNumber total status')
       .sort({ createdAt: -1 });
     res.json(coupons);
   } catch (error) {
