@@ -2601,13 +2601,17 @@ app.get('/api/banner', async (req, res) => {
 // Admin - Update banner
 app.put('/api/admin/banner', authenticateToken, adminAuth, async (req, res) => {
   try {
+    // Remove immutable fields from the update payload
+    const { _id, __v, ...updateData } = req.body;
+
     const banner = await Banner.findOneAndUpdate(
       {}, // Find the first (and only) banner document
-      { $set: req.body, updatedAt: new Date(), $setOnInsert: { isActive: true } },
+      { $set: updateData, updatedAt: new Date(), $setOnInsert: { isActive: true } },
       { upsert: true, new: true }
     );
     res.json({ message: 'Banner updated successfully', banner });
   } catch (error) {
+    console.error('Update banner error:', error);
     res.status(500).json({ error: 'Failed to update banner' });
   }
 });
