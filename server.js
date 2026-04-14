@@ -2092,7 +2092,6 @@ const settingsSchema = new mongoose.Schema({
   instagram: { type: String, default: 'https://www.instagram.com/samriddhishop?igsh=cGU3bWFiajN2emM3' },
   facebook: { type: String, default: 'https://www.facebook.com/profile.php?id=61582670666605' },
   shippingZones: [shippingZoneSchema], // Add shipping zones array
-  loginBackgroundImage: { type: String, default: '' },
   updatedAt: { type: Date, default: Date.now }
 });
 
@@ -2112,6 +2111,7 @@ const bannerSchema = new mongoose.Schema({
     backgroundImage: { type: String, default: '' },
     backgroundVideo: { type: String, default: '' },
   },
+  loginBackgroundImage: { type: String, default: '' },
   isActive: { type: Boolean, default: true },
   updatedAt: { type: Date, default: Date.now }
 });
